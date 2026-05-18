@@ -1,0 +1,66 @@
+# ###########################################################
+# Vivado 自动生成文件 / 临时文件 / 缓存文件
+# ###########################################################
+
+*.log
+*.jou
+*.str
+*.wcfg
+*.wdb
+*.vcd
+*.vcd.fst
+*.gtkw
+*.prm
+*.bxml
+*.xml.bak
+*.bak
+*.tmp
+*.cache
+
+# Vivado 工程目录
+*.cache/
+*.hw/
+*.ip_user_files/
+*.sim/
+*.runs/
+*.srcs/utils/
+*.xpr.user*
+*.jou
+*.log
+
+# 综合/实现临时目录
+synth_1/
+impl_1/
+run_1/
+sim_1/
+
+# 仿真波形
+waveform/
+waveform.db/
+
+# 报告文件
+*.rpt
+*.html
+*.xml
+
+# 比特流 / 编译输出（可选保留，一般不提交）
+*.bit
+*.bin
+*.mcs
+*.prm
+
+# IDE 配置/用户设置
+.idea/
+.vscode/
+.DS_Store
+*.user*
+*.autosave
+
+# IP 缓存（源码在 srcs 里，缓存不提交）
+ip/
+ip_cache/
+ip_inst/
+
+# 工程备份
+*.backup/
+*.backup.*
