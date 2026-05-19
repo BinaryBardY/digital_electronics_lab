@@ -12,22 +12,22 @@
 
 | 顶层端口 | 方向 | 位宽 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `fpga_clk` | input | 1 | 50MHz 系统时钟 |
-| `reset_n` | input | 1 | 系统复位按键，低电平有效 |
-| `key_n` | input | 4 | `KEY1` ~ `KEY4`，低电平有效 |
-| `led` | output | 4 | 剩余机会 LED，高电平点亮 |
-| `dig` | output | 6 | 数码管位选，低电平有效 |
-| `seg` | output | 8 | 数码管段选，低电平有效，顺序为 `{DP,G,F,E,D,C,B,A}` |
-| `beep` | output | 1 | 无源蜂鸣器 PWM 输出 |
+| `fpga_clk_i` | input | 1 | 50MHz 系统时钟 |
+| `reset_n_i` | input | 1 | 系统复位按键，低电平有效 |
+| `key_n_i` | input | 4 | `KEY1` ~ `KEY4`，低电平有效 |
+| `led_o` | output | 4 | 剩余机会 LED，高电平点亮 |
+| `dig_o` | output | 6 | 数码管位选，低电平有效 |
+| `seg_o` | output | 8 | 数码管段选，低电平有效，顺序为 `{DP,G,F,E,D,C,B,A}` |
+| `beep_o` | output | 1 | 无源蜂鸣器 PWM 输出 |
 
 按键映射：
 
 | 按键 | 顶层位 | 游戏功能 |
 | :--- | :--- | :--- |
-| `KEY1` | `key_n[0]` | 运行状态下车子右移 1 格 |
-| `KEY2` | `key_n[1]` | 运行状态下车子左移 1 格 |
-| `KEY3` | `key_n[2]` | 初始状态下可开始游戏 |
-| `KEY4` | `key_n[3]` | 初始状态下可开始游戏 |
+| `KEY1` | `key_n_i[0]` | 运行状态下车子右移 1 格 |
+| `KEY2` | `key_n_i[1]` | 运行状态下车子左移 1 格 |
+| `KEY3` | `key_n_i[2]` | 初始状态下可开始游戏 |
+| `KEY4` | `key_n_i[3]` | 初始状态下可开始游戏 |
 
 约束文件为 `vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/constrs_1/new/obstacle_car.xdc`，已按题目中的引脚表绑定时钟、复位、按键、LED、数码管和蜂鸣器。
 
@@ -116,7 +116,7 @@ stateDiagram-v2
 
 生命值由 `hp_count` 表示，初始值为 4。LED 为高电平点亮：
 
-| `hp_count` | `led` |
+| `hp_count` | `led_o` |
 | :--- | :--- |
 | 4 | `4'b1111` |
 | 3 | `4'b0111` |
@@ -225,6 +225,6 @@ tb_obstacle_car: all tests passed
 当前版本完成基础功能和胜败音乐。后续若需要加分项，可以在现有架构上扩展：
 
 - 动态难度：根据 `spawn_count` 调整 `step_tick` 频率或步进间隔。
-- LED 特效：将 `led` 输出替换为 PWM/闪烁显示。
+- LED 特效：将 `led_o` 输出替换为 PWM/闪烁显示。
 - 更复杂音乐：扩展 `buzzer_player` 的音符表和节奏表。
 - 障碍 ROM 外置：将 `obstacle_pattern` 从函数改为独立 ROM 模块，便于修改关卡。

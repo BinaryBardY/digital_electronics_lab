@@ -11,8 +11,8 @@
 //    sevenseg_scan / buzzer_player，各子模块只通过清晰的信号互连。
 //
 // 设计约定：
-// - 全系统只使用 fpga_clk 一个 50MHz 时钟。
-// - reset_n 和 key_n 均来自板上按键，硬件上是低电平有效。
+// - 全系统只使用 fpga_clk_i 一个 50MHz 时钟。
+// - reset_n_i 和 key_n_i 均来自板上按键，硬件上是低电平有效。
 // - 低速动作不产生新时钟，而是由 tick_gen 产生单周期 tick enable。
 // - 数码管和蜂鸣器都是由同步逻辑驱动，便于综合和时序约束。
 // -----------------------------------------------------------------------------
@@ -31,22 +31,22 @@ module obstacle_car_top #(
     parameter int MUSIC_TICK_HZ = 8
 ) (
     // 50MHz 系统时钟输入。
-    input  logic       fpga_clk,
+    input  logic       fpga_clk_i,
     // 低有效复位键，进入芯片后会先同步成高有效 rst。
-    input  logic       reset_n,
+    input  logic       reset_n_i,
     // 4 个低有效独立按键：KEY1/KEY2 控制左右，KEY3/KEY4 可开始游戏。
-    input  logic [3:0] key_n,
+    input  logic [3:0] key_n_i,
     // 生命值 LED，高电平点亮。
-    output logic [3:0] led,
+    output logic [3:0] led_o,
     // 6 位数码管位选，低电平有效。
-    output logic [5:0] dig,
+    output logic [5:0] dig_o,
     // 8 路数码管段选，低电平有效，顺序为 {DP,G,F,E,D,C,B,A}。
-    output logic [7:0] seg,
+    output logic [7:0] seg_o,
     // 无源蜂鸣器 PWM 方波输出。
-    output logic       beep
+    output logic       beep_o
 );
-    // reset_pipe 将异步输入 reset_n 同步到 fpga_clk 域。
-    // reset_n 为 0 时表示按下复位，取反后为高有效复位请求。
+    // reset_pipe 将异步输入 reset_n_i 同步到 fpga_clk_i 域。
+    // reset_n_i 为 0 时表示按下复位，取反后为高有效复位请求。
     logic [1:0] reset_pipe = 2'b11;
     logic       rst;
 
@@ -55,7 +55,7 @@ module obstacle_car_top #(
     logic [3:0] key_pressed;
     logic [3:0] key_held;
 
-    // 三个 tick 都是单个 fpga_clk 周期宽度的使能脉冲，不是新时钟。
+    // 三个 tick 都是单个 fpga_clk_i 周期宽度的使能脉冲，不是新时钟。
     logic       step_tick;
     logic       blink_tick;
     logic       scan_tick;
@@ -82,8 +82,8 @@ module obstacle_car_top #(
     logic [1:0]  state_code;
     logic [4:0]  spawn_count;
 
-    always_ff @(posedge fpga_clk) begin
-        reset_pipe <= {reset_pipe[0], ~reset_n};
+    always_ff @(posedge fpga_clk_i) begin
+        reset_pipe <= {reset_pipe[0], ~reset_n_i};
     end
 
     // rst 是高有效同步复位。reset_pipe[1] 让复位释放也同步到时钟边沿。
@@ -95,11 +95,11 @@ module obstacle_car_top #(
         .DEBOUNCE_MS(DEBOUNCE_MS),
         .KEY_COUNT(4)
     ) u_key_debounce (
-        .clk(fpga_clk),
-        .rst(rst),
-        .key_n(key_n),
-        .key_pressed(key_pressed),
-        .key_held(key_held)
+        .clk_i(fpga_clk_i),
+        .rst_i(rst),
+        .key_n_i(key_n_i),
+        .key_pressed_o(key_pressed),
+        .key_held_o(key_held)
     );
 
     // 时基 1：控制障碍下落速度。
@@ -107,9 +107,9 @@ module obstacle_car_top #(
         .CLK_HZ(CLK_HZ),
         .TICK_HZ(STEP_TICK_HZ)
     ) u_step_tick (
-        .clk(fpga_clk),
-        .rst(rst),
-        .tick(step_tick)
+        .clk_i(fpga_clk_i),
+        .rst_i(rst),
+        .tick_o(step_tick)
     );
 
     // 时基 2：控制车子显示闪烁。
@@ -117,9 +117,9 @@ module obstacle_car_top #(
         .CLK_HZ(CLK_HZ),
         .TICK_HZ(BLINK_TICK_HZ)
     ) u_blink_tick (
-        .clk(fpga_clk),
-        .rst(rst),
-        .tick(blink_tick)
+        .clk_i(fpga_clk_i),
+        .rst_i(rst),
+        .tick_o(blink_tick)
     );
 
     // 时基 3：控制 6 位数码管动态扫描。
@@ -127,14 +127,14 @@ module obstacle_car_top #(
         .CLK_HZ(CLK_HZ),
         .TICK_HZ(SCAN_TICK_HZ)
     ) u_scan_tick (
-        .clk(fpga_clk),
-        .rst(rst),
-        .tick(scan_tick)
+        .clk_i(fpga_clk_i),
+        .rst_i(rst),
+        .tick_o(scan_tick)
     );
 
     // 闪烁相位寄存器：每来一次 blink_tick 翻转一次。
     // 初值给 1，使游戏刚开始时车子先可见。
-    always_ff @(posedge fpga_clk) begin
+    always_ff @(posedge fpga_clk_i) begin
         if (rst) begin
             blink_phase <= 1'b1;
         end else if (blink_tick) begin
@@ -145,46 +145,46 @@ module obstacle_car_top #(
     // 游戏核心：负责状态机、车辆移动、障碍下落、碰撞检测、胜败判定。
     // 它不直接关心具体硬件段码，只输出抽象的障碍矩阵和车子列号。
     obstacle_game_core u_game_core (
-        .clk(fpga_clk),
-        .rst(rst),
-        .step_tick(step_tick),
-        .key_pressed(key_pressed),
-        .melody_done(melody_done),
-        .obstacle_grid(obstacle_grid),
-        .car_col(car_col),
-        .hp_count(hp_count),
-        .music_start(music_start),
-        .music_win(music_win),
-        .state_code(state_code),
-        .spawn_count(spawn_count)
+        .clk_i(fpga_clk_i),
+        .rst_i(rst),
+        .step_tick_i(step_tick),
+        .key_pressed_i(key_pressed),
+        .melody_done_i(melody_done),
+        .obstacle_grid_o(obstacle_grid),
+        .car_col_o(car_col),
+        .hp_count_o(hp_count),
+        .music_start_o(music_start),
+        .music_win_o(music_win),
+        .state_code_o(state_code),
+        .spawn_count_o(spawn_count)
     );
 
     // 显示输出：把抽象的 6x3 游戏画面映射到 6 位数码管的 A/G/D 段。
     // 只有 RUN 状态下车子才参与闪烁显示。
     sevenseg_scan u_sevenseg_scan (
-        .clk(fpga_clk),
-        .rst(rst),
-        .scan_tick(scan_tick),
-        .obstacle_grid(obstacle_grid),
-        .car_col(car_col),
-        .car_visible((state_code == 2'd1) && blink_phase),
-        .dig(dig),
-        .seg(seg)
+        .clk_i(fpga_clk_i),
+        .rst_i(rst),
+        .scan_tick_i(scan_tick),
+        .obstacle_grid_i(obstacle_grid),
+        .car_col_i(car_col),
+        .car_visible_i((state_code == 2'd1) && blink_phase),
+        .dig_o(dig_o),
+        .seg_o(seg_o)
     );
 
     // 声音输出：游戏核心只给出“开始播放”和“胜/负类型”，
-    // 具体音符频率、节拍计数和 beep 方波都封装在 buzzer_player 内。
+    // 具体音符频率、节拍计数和 beep_o 方波都封装在 buzzer_player 内。
     buzzer_player #(
         .CLK_HZ(CLK_HZ),
         .NOTE_TICK_HZ(MUSIC_TICK_HZ)
     ) u_buzzer_player (
-        .clk(fpga_clk),
-        .rst(rst),
-        .play_start(music_start),
-        .play_win(music_win),
-        .busy(melody_busy),
-        .done(melody_done),
-        .beep(beep)
+        .clk_i(fpga_clk_i),
+        .rst_i(rst),
+        .play_start_i(music_start),
+        .play_win_i(music_win),
+        .busy_o(melody_busy),
+        .done_o(melody_done),
+        .beep_o(beep_o)
     );
 
     // 生命值转 LED 显示。
@@ -192,11 +192,11 @@ module obstacle_car_top #(
     // hp=4 全亮，hp=0 全灭。
     always_comb begin
         case (hp_count)
-            3'd4: led = 4'b1111;
-            3'd3: led = 4'b0111;
-            3'd2: led = 4'b0011;
-            3'd1: led = 4'b0001;
-            default: led = 4'b0000;
+            3'd4: led_o = 4'b1111;
+            3'd3: led_o = 4'b0111;
+            3'd2: led_o = 4'b0011;
+            3'd1: led_o = 4'b0001;
+            default: led_o = 4'b0000;
         endcase
     end
 
