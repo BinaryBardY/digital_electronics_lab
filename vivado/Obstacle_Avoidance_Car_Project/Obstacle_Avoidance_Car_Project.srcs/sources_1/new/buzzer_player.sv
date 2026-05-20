@@ -49,51 +49,6 @@ module buzzer_player #(
         end
     endfunction
 
-    // 根据目标频率计算半周期计数值。
-    // beep_o 每经过 half_div 个 clk_i 翻转一次，因此完整周期约为：
-    // 2 * half_div / CLK_HZ 秒。
-    function automatic int calc_half_div(input int clk_hz, input int freq_hz);
-        int divider;
-        begin
-            if (freq_hz <= 0) begin
-                calc_half_div = 1;
-            end else begin
-                divider = clk_hz / (freq_hz * 2);
-                calc_half_div = (divider < 1) ? 1 : divider;
-            end
-        end
-    endfunction
-
-    // 音符表。
-    // 胜利旋律总体向上，失败旋律总体向下；返回值单位为 Hz。
-    function automatic int note_freq(input logic win_song, input logic [2:0] index);
-        begin
-            if (win_song) begin
-                case (index)
-                    3'd0: note_freq = 523;
-                    3'd1: note_freq = 659;
-                    3'd2: note_freq = 784;
-                    3'd3: note_freq = 1046;
-                    3'd4: note_freq = 784;
-                    3'd5: note_freq = 1046;
-                    3'd6: note_freq = 1318;
-                    default: note_freq = 1568;
-                endcase
-            end else begin
-                case (index)
-                    3'd0: note_freq = 392;
-                    3'd1: note_freq = 330;
-                    3'd2: note_freq = 262;
-                    3'd3: note_freq = 196;
-                    3'd4: note_freq = 196;
-                    3'd5: note_freq = 165;
-                    3'd6: note_freq = 147;
-                    default: note_freq = 131;
-                endcase
-            end
-        end
-    endfunction
-
     // NOTE_DIV 控制“多久切换到下一个音符”。
     localparam int NOTE_DIV = calc_divider(CLK_HZ, NOTE_TICK_HZ);
     localparam int NOTE_W   = (NOTE_DIV <= 1) ? 1 : $clog2(NOTE_DIV);
@@ -101,6 +56,39 @@ module buzzer_player #(
     localparam int TONE_W   = (CLK_HZ <= 2) ? 1 : $clog2(CLK_HZ);
     localparam logic [NOTE_W-1:0] NOTE_LAST = NOTE_W'(NOTE_DIV - 1);
     localparam logic [2:0]        NOTE_INDEX_LAST = 3'(NOTE_COUNT - 1);
+
+    // 音符半周期计数表。
+    // 不在时序逻辑里用运行期变量做除法，避免 Vivado 综合出很大的组合除法器。
+    function automatic logic [TONE_W-1:0] tone_half_last(
+        input logic       win_song,
+        input logic [2:0] index
+    );
+        begin
+            if (win_song) begin
+                case (index)
+                    3'd0: tone_half_last = TONE_W'((CLK_HZ / (523  * 2)) - 1);
+                    3'd1: tone_half_last = TONE_W'((CLK_HZ / (659  * 2)) - 1);
+                    3'd2: tone_half_last = TONE_W'((CLK_HZ / (784  * 2)) - 1);
+                    3'd3: tone_half_last = TONE_W'((CLK_HZ / (1046 * 2)) - 1);
+                    3'd4: tone_half_last = TONE_W'((CLK_HZ / (784  * 2)) - 1);
+                    3'd5: tone_half_last = TONE_W'((CLK_HZ / (1046 * 2)) - 1);
+                    3'd6: tone_half_last = TONE_W'((CLK_HZ / (1318 * 2)) - 1);
+                    default: tone_half_last = TONE_W'((CLK_HZ / (1568 * 2)) - 1);
+                endcase
+            end else begin
+                case (index)
+                    3'd0: tone_half_last = TONE_W'((CLK_HZ / (392 * 2)) - 1);
+                    3'd1: tone_half_last = TONE_W'((CLK_HZ / (330 * 2)) - 1);
+                    3'd2: tone_half_last = TONE_W'((CLK_HZ / (262 * 2)) - 1);
+                    3'd3: tone_half_last = TONE_W'((CLK_HZ / (196 * 2)) - 1);
+                    3'd4: tone_half_last = TONE_W'((CLK_HZ / (196 * 2)) - 1);
+                    3'd5: tone_half_last = TONE_W'((CLK_HZ / (165 * 2)) - 1);
+                    3'd6: tone_half_last = TONE_W'((CLK_HZ / (147 * 2)) - 1);
+                    default: tone_half_last = TONE_W'((CLK_HZ / (131 * 2)) - 1);
+                endcase
+            end
+        end
+    endfunction
 
     // note_cnt 控制音符时长；tone_cnt 控制当前音符的 beep_o 翻转频率。
     logic [NOTE_W-1:0] note_cnt;
@@ -133,12 +121,10 @@ module buzzer_player #(
                 song_win   <= play_win_i;
                 beep_o       <= 1'b0;
             end else if (busy_o) begin
-                int current_freq;
                 logic [TONE_W-1:0] current_half_last;
 
-                // 取当前音符频率，并换算成 beep_o 翻转的半周期计数上限。
-                current_freq      = note_freq(song_win, note_index);
-                current_half_last = TONE_W'(calc_half_div(CLK_HZ, current_freq) - 1);
+                // 查表得到 beep_o 翻转的半周期计数上限。
+                current_half_last = tone_half_last(song_win, note_index);
 
                 // 方波发生器：tone_cnt 到达半周期末尾时翻转 beep_o。
                 if (tone_cnt >= current_half_last) begin

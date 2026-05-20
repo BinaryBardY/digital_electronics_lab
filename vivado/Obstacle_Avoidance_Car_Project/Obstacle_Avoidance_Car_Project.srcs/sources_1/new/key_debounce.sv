@@ -34,6 +34,7 @@ module key_debounce #(
     output logic [KEY_COUNT-1:0] key_held_o
 );
     // 将防抖时间从 ms 换算为 clk_i 周期。
+    // 先算出一个毫秒多少个周期，再乘以 DEBOUNCE_MS计算出总周期数。
     // 至少返回 1，避免极端参数下产生 0 宽计数器。
     function automatic int calc_cycles(input int clk_hz, input int debounce_ms);
         int cycles;
@@ -46,6 +47,8 @@ module key_debounce #(
     localparam int DEBOUNCE_CYCLES = calc_cycles(CLK_HZ, DEBOUNCE_MS);
     localparam int CNT_W           = (DEBOUNCE_CYCLES <= 1) ? 1 : $clog2(DEBOUNCE_CYCLES);
     localparam logic [CNT_W-1:0] DEBOUNCE_LAST = CNT_W'(DEBOUNCE_CYCLES - 1);
+    // CNT_W：计数器要几位
+    // DEBOUNCE_LAST：计数器最后要数到的值
 
     // 两级同步寄存器：降低异步按键输入导致亚稳态传播的概率。
     // 复位时置 1，对应“未按下”的原始低有效电平。
