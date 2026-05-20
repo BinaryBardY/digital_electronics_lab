@@ -42,11 +42,12 @@
 | `obstacle_car_top` | `obstacle_car_top.sv` | 顶层集成，连接按键、游戏核心、数码管和蜂鸣器 |
 | `key_debounce` | `key_debounce.sv` | 低有效按键同步、防抖，并生成高有效单周期按下脉冲 |
 | `tick_gen` | `tick_gen.sv` | 根据 50MHz 时钟产生低速 tick enable |
+| `hp_led_pwm` | `hp_led_pwm.sv` | 剩余机会 LED PWM 呼吸显示，以及扣血爆闪后熄灭动画 |
 | `obstacle_game_core` | `obstacle_game_core.sv` | 游戏 FSM、障碍更新、车辆移动、碰撞检测、生命值和胜败判定 |
 | `sevenseg_scan` | `sevenseg_scan.sv` | 6 位共阳极数码管动态扫描，输出低有效位选和段选 |
 | `buzzer_player` | `buzzer_player.sv` | 胜利/失败 8 音符蜂鸣器旋律播放 |
 
-顶层中使用三个 tick：
+顶层中使用三个主要 tick，LED 特效模块内部还复用 `tick_gen` 产生呼吸和爆闪 tick：
 
 | tick | 默认频率 | 用途 |
 | :--- | :--- | :--- |
@@ -85,7 +86,7 @@ obstacle_grid[col * 3 + 2] -> 下层 D 段
 
 | 状态 | 编码 | 说明 |
 | :--- | :--- | :--- |
-| `ST_IDLE` | `2'd0` | 初始状态，LED 全亮，数码管清空，等待任意按键开始 |
+| `ST_IDLE` | `2'd0` | 初始状态，4 个剩余机会 LED 同步呼吸，数码管清空，等待任意按键开始 |
 | `ST_RUN` | `2'd1` | 运行状态，处理车辆移动、障碍下落、碰撞和胜败判定 |
 | `ST_WIN` | `2'd2` | 胜利状态，播放欢快音乐，音乐结束后回到初始状态 |
 | `ST_LOSE` | `2'd3` | 失败状态，播放伤心音乐，音乐结束后回到初始状态 |
@@ -108,21 +109,25 @@ stateDiagram-v2
 - `KEY2` 左移，`KEY1` 右移。
 - 到达最左或最右边界后继续按同方向键不会越界。
 - `KEY1` 和 `KEY2` 同时按下时不移动，避免方向冲突。
-- 每次 `step_tick` 到来，障碍从上层移动到中层，中层移动到下层，并从预置障碍序列中生成新的上层障碍。
+- 每次 `step_tick` 到来，障碍从上层移动到中层，中层移动到下层，并由 LFSR 伪随机刷新生成新的上层障碍。
+- `obstacle_game_core` 在 `ST_IDLE` 持续滚动 16 位 LFSR，因此玩家按下开始键的时机不同，会得到不同的障碍序列。默认种子由参数 `LFSR_SEED = 16'hACE1` 给出。
+- 生成新障碍时，核心维护一条 `safe_col` 安全通道。相邻两批障碍的安全列最多左移或右移 1 格，并且该列强制无障碍；每行至少放置 3 个障碍，但不会出现 6 列全堵。这里的“不会进入死局”表示关卡始终存在一条按键可达路线，玩家操作失误仍然会碰撞扣血。
 - 当下层障碍与车子列号相同，判定碰撞；碰撞后该障碍消失，生命值 `M` 减 1。
 - 当 `M = 0` 时失败；当 20 层障碍全部生成并完全离开画面后胜利。
 
 ## 6. 生命值与蜂鸣器
 
-生命值由 `hp_count` 表示，初始值为 4。LED 为高电平点亮：
+生命值由 `hp_count` 表示，初始值为 4。LED 为高电平点亮，并由 `hp_led_pwm` 做 PWM 特效：
 
-| `hp_count` | `led_o` |
+| `hp_count` | 剩余机会掩码 |
 | :--- | :--- |
 | 4 | `4'b1111` |
 | 3 | `4'b0111` |
 | 2 | `4'b0011` |
 | 1 | `4'b0001` |
 | 0 | `4'b0000` |
+
+掩码内的 LED 同步呼吸，最低亮度不降到 0，避免剩余机会在呼吸低谷完全不可见。当 `hp_count` 减小时，`hp_led_pwm` 通过寄存后的 `hp_count_d` 检测减少事件，被扣除的 LED 快速爆闪约 0.5s 后熄灭，其他剩余 LED 继续呼吸。该模块只使用 `posedge clk_i` 和 tick enable，不使用下降沿或派生时钟。
 
 蜂鸣器模块 `buzzer_player` 在游戏结束时启动：
 
@@ -145,8 +150,10 @@ stateDiagram-v2
 - `KEY2` 控制车子左移，`KEY1` 控制车子右移。
 - 车辆移动到左右边界后不会越界。
 - `KEY1` 和 `KEY2` 同时按下时车子不移动。
-- 连续碰撞 4 次后进入失败状态，生命值变为 0，触发失败音乐。
-- 安全通过全部障碍后进入胜利状态，生命值保持为 4，触发胜利音乐。
+- `hp_led_pwm` 在 hp=4 时四灯同步 PWM 呼吸，扣血时被扣 LED 爆闪后熄灭，hp=0 时全灭，hp 恢复后重新呼吸。
+- LFSR 刷新的障碍行不是固定重复图案，生成期内不会出现 6 列全堵，且始终存在下一步可达的安全空位。
+- 主动撞击可达障碍 4 次后进入失败状态，生命值变为 0，触发失败音乐。
+- 自动选择可达安全路线通过全部障碍后进入胜利状态，生命值保持为 4，触发胜利音乐。
 - 胜利/失败音乐结束后自动回到初始状态。
 
 已执行并通过的命令：
@@ -154,6 +161,7 @@ stateDiagram-v2
 ```bash
 verilator --lint-only -sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/tick_gen.sv \
+  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/hp_led_pwm.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/key_debounce.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/obstacle_game_core.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/sevenseg_scan.sv \
@@ -165,6 +173,7 @@ verilator --lint-only -sv \
 ```bash
 verilator --lint-only --timing -sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/tick_gen.sv \
+  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/hp_led_pwm.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/key_debounce.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/obstacle_game_core.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/sevenseg_scan.sv \
@@ -175,8 +184,9 @@ verilator --lint-only --timing -sv \
 ```
 
 ```bash
-verilator --binary --timing -sv \
+verilator --binary --timing -sv --Mdir /private/tmp/obstacle_car_vlt \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/tick_gen.sv \
+  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/hp_led_pwm.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/key_debounce.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/obstacle_game_core.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/sevenseg_scan.sv \
@@ -184,7 +194,7 @@ verilator --binary --timing -sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/obstacle_car_top.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sim_1/new/tb_obstacle_car.sv \
   --top-module tb_obstacle_car
-obj_dir/Vtb_obstacle_car
+/private/tmp/obstacle_car_vlt/Vtb_obstacle_car
 ```
 
 最终仿真输出：
@@ -207,24 +217,23 @@ tb_obstacle_car: all tests passed
 
 在有 Vivado 的环境中，建议按以下顺序检查：
 
-1. 打开 `.xpr`，确认 Sources 中能看到 6 个 RTL 文件。
+1. 打开 `.xpr`，确认 Sources 中能看到 7 个 RTL 文件。
 2. 确认 Constraints 中启用了 `obstacle_car.xdc`。
 3. 运行 Behavioral Simulation，观察 testbench 是否通过。
 4. 运行 Synthesis，确认无 latch、无多驱动、无未约束顶层端口。
 5. 运行 Implementation 和 Generate Bitstream。
 6. 下载到开发板后检查：
-   - 初始状态 LED 全亮、数码管全灭。
+   - 初始状态 4 个 LED 同步呼吸、数码管全灭。
    - 任意 KEY 开始游戏。
    - `KEY2` 左移、`KEY1` 右移，按键为低有效。
    - 障碍常亮下落，车子底层闪烁。
-   - 碰撞后 LED 逐个熄灭。
+   - 碰撞后被扣除的 LED 爆闪后熄灭，其余剩余机会 LED 继续呼吸。
    - 胜利/失败后蜂鸣器播放不同音效，并自动返回初始状态。
 
 ## 9. 可扩展方向
 
-当前版本完成基础功能和胜败音乐。后续若需要加分项，可以在现有架构上扩展：
+当前版本完成基础功能、胜败音乐和 PWM 呼吸灯扣血动画。后续若需要继续加分，可以在现有架构上扩展：
 
 - 动态难度：根据 `spawn_count` 调整 `step_tick` 频率或步进间隔。
-- LED 特效：将 `led_o` 输出替换为 PWM/闪烁显示。
 - 更复杂音乐：扩展 `buzzer_player` 的音符表和节奏表。
-- 障碍 ROM 外置：将 `obstacle_pattern` 从函数改为独立 ROM 模块，便于修改关卡。
+- 障碍参数化：把 LFSR 种子、最低障碍数和安全通道移动策略做成可配置参数，便于调节关卡风格。

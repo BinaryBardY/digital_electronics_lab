@@ -17,7 +17,9 @@
 // -----------------------------------------------------------------------------
 module obstacle_game_core #(
     // 关卡一共生成多少批障碍。默认 20 批，生成完并全部离开画面后胜利。
-    parameter int OBSTACLE_COUNT = 20
+    parameter int OBSTACLE_COUNT = 20,
+    // LFSR 初始种子必须非 0；空闲态持续滚动，开局时机不同会得到不同障碍序列。
+    parameter logic [15:0] LFSR_SEED = 16'hACE1
 ) (
     input  logic        clk_i,
     // 高有效同步复位。
@@ -67,34 +69,75 @@ module obstacle_game_core #(
     logic [5:0] row_mid;
     logic [5:0] row_bottom;
 
-    // 关卡 ROM：根据已经生成的批次 index，返回新进入 top 行的 6 位障碍。
-    // 位号仍是列号，1 表示该列有障碍，0 表示空位。
-    // 这些图案刻意保留空隙，玩家可以通过左右移动避开。
-    function automatic logic [5:0] obstacle_pattern(input logic [4:0] index);
+    // LFSR 状态用于动态刷新障碍；safe_col 记录下一批障碍强制留空的安全列。
+    logic [15:0] lfsr_state;
+    logic [2:0]  safe_col;
+
+    function automatic logic [15:0] lfsr_step(input logic [15:0] value);
+        logic feedback;
         begin
-            case (index)
-                5'd0:  obstacle_pattern = 6'b111110;
-                5'd1:  obstacle_pattern = 6'b101110;
-                5'd2:  obstacle_pattern = 6'b011110;
-                5'd3:  obstacle_pattern = 6'b111010;
-                5'd4:  obstacle_pattern = 6'b110010;
-                5'd5:  obstacle_pattern = 6'b100110;
-                5'd6:  obstacle_pattern = 6'b010110;
-                5'd7:  obstacle_pattern = 6'b101010;
-                5'd8:  obstacle_pattern = 6'b011010;
-                5'd9:  obstacle_pattern = 6'b110100;
-                5'd10: obstacle_pattern = 6'b101100;
-                5'd11: obstacle_pattern = 6'b011100;
-                5'd12: obstacle_pattern = 6'b100010;
-                5'd13: obstacle_pattern = 6'b010010;
-                5'd14: obstacle_pattern = 6'b001110;
-                5'd15: obstacle_pattern = 6'b101010;
-                5'd16: obstacle_pattern = 6'b110010;
-                5'd17: obstacle_pattern = 6'b011010;
-                5'd18: obstacle_pattern = 6'b100110;
-                5'd19: obstacle_pattern = 6'b111100;
-                default: obstacle_pattern = 6'b000000;
+            feedback = value[15] ^ value[13] ^ value[12] ^ value[10];
+            lfsr_step = {value[14:0], feedback};
+        end
+    endfunction
+
+    function automatic logic [2:0] next_safe_col(
+        input logic [2:0] current_col,
+        input logic [1:0] random_choice
+    );
+        begin
+            unique case (random_choice)
+                2'b00: begin
+                    if (current_col == 3'd0) begin
+                        next_safe_col = 3'd1;
+                    end else begin
+                        next_safe_col = current_col - 1'b1;
+                    end
+                end
+
+                2'b10: begin
+                    if (current_col == 3'd5) begin
+                        next_safe_col = 3'd4;
+                    end else begin
+                        next_safe_col = current_col + 1'b1;
+                    end
+                end
+
+                default: next_safe_col = current_col;
             endcase
+        end
+    endfunction
+
+    function automatic logic [5:0] make_obstacle_row(
+        input logic [15:0] random_value,
+        input logic [4:0]  row_index,
+        input logic [2:0]  open_col
+    );
+        logic [5:0] row_value;
+        int obstacle_count;
+        int col;
+        begin
+            row_value = random_value[5:0]
+                      ^ random_value[11:6]
+                      ^ {1'b0, row_index};
+            row_value[open_col] = 1'b0;
+
+            obstacle_count = 0;
+            for (col = 0; col < 6; col++) begin
+                if (row_value[col]) begin
+                    obstacle_count++;
+                end
+            end
+
+            // 每行至少放 3 个障碍，但永远不填安全列，避免生成全堵死局。
+            for (col = 0; col < 6; col++) begin
+                if ((obstacle_count < 3) && (col != int'(open_col)) && !row_value[col]) begin
+                    row_value[col] = 1'b1;
+                    obstacle_count++;
+                end
+            end
+
+            make_obstacle_row = row_value;
         end
     endfunction
 
@@ -133,6 +176,8 @@ module obstacle_game_core #(
             spawn_count_o <= '0;
             music_start_o <= 1'b0;
             music_win_o   <= 1'b0;
+            lfsr_state    <= (LFSR_SEED == 16'h0000) ? 16'hACE1 : LFSR_SEED;
+            safe_col      <= 3'd3;
         end else begin
             // music_start_o 是事件脉冲，默认每拍清零；
             // 只有进入 WIN/LOSE 的那一拍置 1。
@@ -149,6 +194,8 @@ module obstacle_game_core #(
                     hp_count_o    <= 3'd4;
                     spawn_count_o <= '0;
                     music_win_o   <= 1'b0;
+                    safe_col      <= 3'd3;
+                    lfsr_state    <= lfsr_step(lfsr_state);
 
                     // 任意按键都可以开始游戏。key_pressed_i 已经过防抖，
                     // 所以这里不会因为机械抖动重复触发。
@@ -167,6 +214,8 @@ module obstacle_game_core #(
                     logic [5:0] next_top;
                     logic [5:0] next_mid;
                     logic [5:0] next_bottom;
+                    logic [15:0] next_lfsr_state;
+                    logic [2:0] next_safe_col_value;
                     logic       hit;
                     logic       finished;
 
@@ -176,6 +225,8 @@ module obstacle_game_core #(
                     next_top         = row_top;
                     next_mid         = row_mid;
                     next_bottom      = row_bottom;
+                    next_lfsr_state  = lfsr_state;
+                    next_safe_col_value = safe_col;
 
                     // 车辆移动规则：
                     // - KEY2 左移，KEY1 右移。
@@ -194,8 +245,10 @@ module obstacle_game_core #(
                         next_bottom = row_mid;
                         next_mid    = row_top;
                         if (spawn_count_o < OBSTACLE_COUNT_VALUE) begin
-                            next_top = obstacle_pattern(spawn_count_o);
+                            next_safe_col_value = next_safe_col(safe_col, lfsr_state[1:0]);
+                            next_top = make_obstacle_row(lfsr_state, spawn_count_o, next_safe_col_value);
                             next_spawn_count = spawn_count_o + 1'b1;
+                            next_lfsr_state = lfsr_step(lfsr_state);
                         end else begin
                             next_top = '0;
                         end
@@ -229,6 +282,8 @@ module obstacle_game_core #(
                     car_col_o     <= next_car_col;
                     hp_count_o    <= next_hp_count;
                     spawn_count_o <= next_spawn_count;
+                    lfsr_state    <= next_lfsr_state;
+                    safe_col      <= next_safe_col_value;
 
                     // 失败优先级高于胜利：如果最后一撞刚好扣到 0，进入 LOSE。
                     // 进入结束态时启动蜂鸣器，并用 music_win_o 选择曲目。

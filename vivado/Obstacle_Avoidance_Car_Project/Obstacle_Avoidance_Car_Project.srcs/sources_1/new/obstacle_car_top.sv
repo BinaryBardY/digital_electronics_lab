@@ -187,18 +187,15 @@ module obstacle_car_top #(
         .beep_o(beep_o)
     );
 
-    // 生命值转 LED 显示。
-    // 这里采用从低位到高位逐个熄灭的直观显示方式：
-    // hp=4 全亮，hp=0 全灭。
-    always_comb begin
-        case (hp_count)
-            3'd4: led_o = 4'b1111;
-            3'd3: led_o = 4'b0111;
-            3'd2: led_o = 4'b0011;
-            3'd1: led_o = 4'b0001;
-            default: led_o = 4'b0000;
-        endcase
-    end
+    // 生命值 LED 特效：剩余机会同步呼吸，扣除机会时爆闪后熄灭。
+    hp_led_pwm #(
+        .CLK_HZ(CLK_HZ)
+    ) u_hp_led_pwm (
+        .clk_i(fpga_clk_i),
+        .rst_i(rst),
+        .hp_count_i(hp_count),
+        .led_o(led_o)
+    );
 
     // 保留调试信号的连接，避免综合工具报告未使用信号警告；
     // 该归约异或结果没有外接端口，不影响设计功能。
