@@ -10,7 +10,9 @@
 // - obstacle_grid_o：6 列 x 3 层的障碍矩阵。
 // - car_col_o      ：车子当前所在列。
 // - hp_count_o     ：剩余生命值。
+// - collision_start_o：普通碰撞时通知蜂鸣器播放短促提示音。
 // - music_start_o/music_win_o：结束时通知蜂鸣器播放胜利或失败旋律。
+// - crash_effect_o：失败态期间通知显示模块播放最终撞车爆闪。
 //
 // 这样做的好处是：游戏规则和硬件显示细节解耦。阅读时先理解本模块的
 // 状态机，再看 sevenseg_scan 如何把 obstacle_grid_o 映射成 A/G/D 段。
@@ -39,10 +41,14 @@ module obstacle_game_core #(
     output logic [2:0]  car_col_o,
     // 剩余生命值，初始为 4，碰撞一次减 1。
     output logic [2:0]  hp_count_o,
+    // 普通碰撞刚发生时拉高一拍，最终扣到 0 的碰撞不触发该短音。
+    output logic        collision_start_o,
     // 胜利或失败刚发生时拉高一拍，启动 buzzer_player。
     output logic        music_start_o,
     // 1 表示播放胜利音乐，0 表示播放失败音乐。
     output logic        music_win_o,
+    // 最终碰撞导致失败后保持为 1，用于显示车辆撞毁爆闪。
+    output logic        crash_effect_o,
     // 当前状态编码，供顶层控制车子是否显示，也便于仿真观察。
     output logic [1:0]  state_code_o,
     // 已经生成过的障碍批次数，供调试和胜利判定使用。
@@ -173,15 +179,17 @@ module obstacle_game_core #(
             row_bottom  <= '0;
             car_col_o     <= 3'd3;
             hp_count_o    <= 3'd4;
+            collision_start_o <= 1'b0;
             spawn_count_o <= '0;
             music_start_o <= 1'b0;
             music_win_o   <= 1'b0;
             lfsr_state    <= (LFSR_SEED == 16'h0000) ? 16'hACE1 : LFSR_SEED;
             safe_col      <= 3'd3;
         end else begin
-            // music_start_o 是事件脉冲，默认每拍清零；
-            // 只有进入 WIN/LOSE 的那一拍置 1。
-            music_start_o <= 1'b0;
+            // collision_start_o / music_start_o 都是事件脉冲，默认每拍清零；
+            // 只有对应事件发生的那一拍置 1。
+            collision_start_o <= 1'b0;
+            music_start_o     <= 1'b0;
 
             case (state)
                 ST_IDLE: begin
@@ -192,6 +200,7 @@ module obstacle_game_core #(
                     row_bottom  <= '0;
                     car_col_o     <= 3'd3;
                     hp_count_o    <= 3'd4;
+                    collision_start_o <= 1'b0;
                     spawn_count_o <= '0;
                     music_win_o   <= 1'b0;
                     safe_col      <= 3'd3;
@@ -295,6 +304,8 @@ module obstacle_game_core #(
                         state       <= ST_WIN;
                         music_start_o <= 1'b1;
                         music_win_o   <= 1'b1;
+                    end else if (hit) begin
+                        collision_start_o <= 1'b1;
                     end
                 end
 
@@ -326,4 +337,6 @@ module obstacle_game_core #(
             endcase
         end
     end
+
+    assign crash_effect_o = (state == ST_LOSE);
 endmodule

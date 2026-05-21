@@ -10,6 +10,7 @@
 // - 每次 scan_tick_i 切换到下一位数码管。
 // - 每一列只使用 A/G/D 三个横向段显示游戏三层。
 // - 障碍常亮，车子在底层 D 段闪烁。
+// - 最后一撞 HP=0 后，车辆所在列用多段爆闪表示撞毁。
 //
 // 硬件极性：
 // - dig_o 低有效：某一位写 0 表示选中该位。
@@ -28,6 +29,10 @@ module sevenseg_scan (
     input  logic [2:0]  car_col_i,
     // 车子是否可见。顶层用 blink_phase 产生闪烁效果。
     input  logic        car_visible_i,
+    // 最终撞毁特效使能。普通碰撞不应拉高该信号。
+    input  logic        crash_effect_i,
+    // 撞毁特效当前是否可见，顶层用闪烁相位控制。
+    input  logic        crash_visible_i,
     // 6 位位选输出，低有效。
     output logic [5:0]  dig_o,
     // 8 位段选输出，低有效，包含 DP。
@@ -69,8 +74,13 @@ module sevenseg_scan (
 
         // 车子也画在底层 D 段。如果当前扫描列等于 car_col_i，
         // 且顶层允许车子可见，就点亮 D 段形成闪烁车身。
-        if (car_visible_i && (car_col_i == col_index)) begin
-            seg_on[3] = 1'b1;
+        // 最后一撞 HP=0 后，车辆所在列改为多段爆闪，强调游戏失败。
+        if (car_col_i == col_index) begin
+            if (crash_effect_i && crash_visible_i) begin
+                seg_on = 7'b1111111;
+            end else if (car_visible_i) begin
+                seg_on[3] = 1'b1;
+            end
         end
 
         // 默认不选中任何位，再把当前位拉低选中。

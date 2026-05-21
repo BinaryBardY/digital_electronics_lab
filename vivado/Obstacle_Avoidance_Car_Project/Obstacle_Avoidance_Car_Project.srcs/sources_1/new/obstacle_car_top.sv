@@ -73,8 +73,10 @@ module obstacle_car_top #(
 
     // 游戏结束时，核心用 music_start 拉高一拍启动蜂鸣器；
     // music_win 选择胜利旋律或失败旋律。
+    logic        collision_start;
     logic        music_start;
     logic        music_win;
+    logic        crash_effect;
     logic        melody_done;
     logic        melody_busy;
 
@@ -153,14 +155,16 @@ module obstacle_car_top #(
         .obstacle_grid_o(obstacle_grid),
         .car_col_o(car_col),
         .hp_count_o(hp_count),
+        .collision_start_o(collision_start),
         .music_start_o(music_start),
         .music_win_o(music_win),
+        .crash_effect_o(crash_effect),
         .state_code_o(state_code),
         .spawn_count_o(spawn_count)
     );
 
     // 显示输出：把抽象的 6x3 游戏画面映射到 6 位数码管的 A/G/D 段。
-    // 只有 RUN 状态下车子才参与闪烁显示。
+    // 普通情况下只有 RUN 状态显示车子；最终 HP=0 后显示撞车列爆闪。
     sevenseg_scan u_sevenseg_scan (
         .clk_i(fpga_clk_i),
         .rst_i(rst),
@@ -168,18 +172,21 @@ module obstacle_car_top #(
         .obstacle_grid_i(obstacle_grid),
         .car_col_i(car_col),
         .car_visible_i((state_code == 2'd1) && blink_phase),
+        .crash_effect_i(crash_effect),
+        .crash_visible_i(crash_effect && blink_phase),
         .dig_o(dig_o),
         .seg_o(seg_o)
     );
 
-    // 声音输出：游戏核心只给出“开始播放”和“胜/负类型”，
-    // 具体音符频率、节拍计数和 beep_o 方波都封装在 buzzer_player 内。
+    // 声音输出：普通碰撞触发短音；游戏结束触发胜/负旋律。
+    // 具体频率、节拍计数和 beep_o 方波都封装在 buzzer_player 内。
     buzzer_player #(
         .CLK_HZ(CLK_HZ),
         .NOTE_TICK_HZ(MUSIC_TICK_HZ)
     ) u_buzzer_player (
         .clk_i(fpga_clk_i),
         .rst_i(rst),
+        .collision_start_i(collision_start),
         .play_start_i(music_start),
         .play_win_i(music_win),
         .busy_o(melody_busy),
