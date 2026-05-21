@@ -45,7 +45,8 @@
 | `hp_led_pwm` | `hp_led_pwm.sv` | 剩余机会 LED PWM 呼吸显示，以及扣血爆闪后熄灭动画 |
 | `obstacle_game_core` | `obstacle_game_core.sv` | 游戏 FSM、障碍更新、车辆移动、碰撞检测、生命值和胜败判定 |
 | `sevenseg_scan` | `sevenseg_scan.sv` | 6 位共阳极数码管动态扫描，输出低有效位选和段选 |
-| `buzzer_player` | `buzzer_player.sv` | 普通碰撞短音，以及胜利/失败 8 音符蜂鸣器旋律播放 |
+| `buzzer_player` | `buzzer_player.sv` | 普通碰撞短音，以及背景/胜利/失败蜂鸣器音乐播放 |
+| `buzzer_pcm_rom` | `buzzer_pcm_rom.svh` / `buzzer_pcm_rom.mem` | 由 `music/` 下 MP3 离线转换出的整首 4kHz/4bit PCM ROM |
 
 顶层中使用三个主要 tick，LED 特效模块内部还复用 `tick_gen` 产生呼吸和爆闪 tick：
 
@@ -70,7 +71,7 @@
 | 中层 | `G` | 障碍下落中间位置 |
 | 下层 | `D` | 碰撞检测位置，同时也是车子所在层 |
 
-障碍使用常亮段码显示，车子使用 `D` 段闪烁显示。由于开发板数码管只有单色显示，实际硬件上无法显示题目图中的红色和黄色，因此用“常亮”和“闪烁”区分障碍与车子。最后一次碰撞导致 HP=0 后，车辆所在列会在失败音乐期间多段爆闪，表示车辆已撞毁。
+障碍使用常亮段码显示，车子使用 `D` 段闪烁显示。由于开发板数码管只有单色显示，实际硬件上无法显示题目图中的红色和黄色，因此用“常亮”和“闪烁”区分障碍与车子。`IDLE` 状态下中间车位会闪烁，提示当前可按任意键开始。最后一次碰撞导致 HP=0 后，车辆所在列会在失败音乐期间多段爆闪，表示车辆已撞毁。
 
 内部障碍画面使用 18 位 `obstacle_grid` 表示，每列 3 位：
 
@@ -86,21 +87,21 @@ obstacle_grid[col * 3 + 2] -> 下层 D 段
 
 | 状态 | 编码 | 说明 |
 | :--- | :--- | :--- |
-| `ST_IDLE` | `2'd0` | 初始状态，4 个剩余机会 LED 同步呼吸，数码管清空，等待任意按键开始 |
+| `ST_IDLE` | `2'd0` | 初始状态，4 个剩余机会 LED 同步呼吸，中间车位闪烁提示，等待任意按键开始 |
 | `ST_RUN` | `2'd1` | 运行状态，处理车辆移动、障碍下落、碰撞和胜败判定 |
-| `ST_WIN` | `2'd2` | 胜利状态，播放欢快音乐，音乐结束后回到初始状态 |
-| `ST_LOSE` | `2'd3` | 失败状态，播放伤心音乐，音乐结束后回到初始状态 |
+| `ST_WIN` | `2'd2` | 胜利状态，播放胜利音乐，等待任意按键回到初始状态 |
+| `ST_LOSE` | `2'd3` | 失败状态，播放失败音乐，等待任意按键回到初始状态 |
 
 状态转换关系：
 
 ```mermaid
 stateDiagram-v2
     [*] --> IDLE
-    IDLE --> RUN: KEY1~KEY4 任意键按下
+    IDLE --> RUN: KEY1~KEY4 任意键按下 / 启动背景音乐
     RUN --> WIN: 20 层障碍全部通过
     RUN --> LOSE: 剩余机会 M = 0
-    WIN --> IDLE: 胜利音乐播放完成
-    LOSE --> IDLE: 失败音乐播放完成
+    WIN --> IDLE: KEY1~KEY4 任意键按下 / 停止音乐
+    LOSE --> IDLE: KEY1~KEY4 任意键按下 / 停止音乐
 ```
 
 运行状态规则：
@@ -129,13 +130,15 @@ stateDiagram-v2
 
 掩码内的 LED 同步呼吸，最低亮度不降到 0，避免剩余机会在呼吸低谷完全不可见。当 `hp_count` 减小时，`hp_led_pwm` 通过寄存后的 `hp_count_d` 检测减少事件，被扣除的 LED 快速爆闪约 0.5s 后熄灭，其他剩余 LED 继续呼吸。该模块只使用 `posedge clk_i` 和 tick enable，不使用下降沿或派生时钟。
 
-蜂鸣器模块 `buzzer_player` 支持普通碰撞短音和游戏结束旋律：
+蜂鸣器模块 `buzzer_player` 支持普通碰撞短音和三类整首采样音乐：
 
-- 普通碰撞：播放约 150ms、约 1kHz 的短促提示音，不输出 `done`。
-- 胜利：播放升调音效，频率序列从 523Hz 逐步升高到 1568Hz。
-- 失败：播放降调音效，频率序列从 392Hz 逐步降低到 131Hz。
-- 每首音乐包含 8 个音符，播放完成后输出 `done`，游戏核心据此回到初始状态。
-- 如果普通碰撞短音尚未结束就触发胜利/失败旋律，结算旋律优先播放。
+- 背景音乐：进入 `RUN` 后循环播放，由 `music/background/background_see you again 8 bit 版.mp3` 完整转换而来。
+- 胜利音乐：进入 `ST_WIN` 后播放一次，由 `music/win/win_稻香8bit版.mp3` 完整转换而来。
+- 失败音乐：进入 `ST_LOSE` 后播放一次，由 `music/fail/马里奥游戏失败音乐_9s_to_12s.mp3` 转换而来。
+- 普通碰撞：播放约 150ms、约 1kHz 的短促提示音；若背景音乐正在播放，短音期间暂停背景，短音结束后从原进度继续。
+- 胜利/失败音乐可自行播完并静音，但状态机不会自动返回 `IDLE`；玩家按任意键后立即返回 `IDLE` 并停止当前音乐。
+- 音频由 `tools/generate_buzzer_pcm.py` 离线转换为 4kHz、4bit、单声道 PCM；两个采样打包为 1 byte，存入 `buzzer_pcm_rom.mem`。
+- `buzzer_player` 从 PCM ROM 按采样点读取原音频波形，再用一阶 Sigma-Delta 调制输出到单个 `beep_o` 引脚。默认 `VOLUME_SHIFT=1`，约 50% 音量，避免蜂鸣器过响刺耳。
 
 ## 7. 验证方法
 
@@ -148,23 +151,24 @@ stateDiagram-v2
 已验证场景：
 
 - 低有效 `KEY1` 按下后，防抖模块只产生一个高有效 `key_pressed` 脉冲。
-- 初始状态下 `KEY1` ~ `KEY4` 任意键均可开始游戏。
+- 初始状态下 `KEY1` ~ `KEY4` 任意键均可开始游戏，并启动循环背景音乐。
 - `KEY2` 控制车子左移，`KEY1` 控制车子右移。
 - 车辆移动到左右边界后不会越界。
 - `KEY1` 和 `KEY2` 同时按下时车子不移动。
 - `hp_led_pwm` 在 hp=4 时四灯同步 PWM 呼吸，扣血时被扣 LED 爆闪后熄灭，hp=0 时全灭，hp 恢复后重新呼吸。
 - 普通碰撞只触发 `collision_start` 短音事件，不触发车辆视觉爆闪。
-- 最后一次碰撞进入失败状态时，`crash_effect` 保持有效，车辆所在数码管列快速爆闪，失败音乐结束返回初始状态后清除。
-- `buzzer_player` 的普通碰撞短音会翻转 `beep_o`，短音结束不产生 `done`；胜利/失败旋律结束才产生 `done`。
+- 最后一次碰撞进入失败状态时，`crash_effect` 保持有效，车辆所在数码管列快速爆闪，并启动失败音乐。
+- `buzzer_player` 的普通碰撞短音会翻转 `beep_o`，短音结束不产生 `done`；普通碰撞会暂停背景音乐并在短音结束后续播。
+- 胜利/失败音乐结束后保持结算态静音；任意按键会停止当前音乐并回到初始状态。
 - LFSR 刷新的障碍行不是固定重复图案，生成期内不会出现 6 列全堵，且始终存在下一步可达的安全空位。
-- 主动撞击可达障碍 4 次后进入失败状态，生命值变为 0，触发失败音乐。
-- 自动选择可达安全路线通过全部障碍后进入胜利状态，生命值保持为 4，触发胜利音乐。
-- 胜利/失败音乐结束后自动回到初始状态。
+- 主动撞击可达障碍 4 次后进入失败状态，生命值变为 0，触发失败音乐，按键后返回初始状态。
+- 自动选择可达安全路线通过全部障碍后进入胜利状态，生命值保持为 4，触发胜利音乐，按键后返回初始状态。
 
 已执行并通过的命令：
 
 ```bash
 verilator --lint-only -sv \
+  -Ivivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/tick_gen.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/hp_led_pwm.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/key_debounce.sv \
@@ -177,6 +181,7 @@ verilator --lint-only -sv \
 
 ```bash
 verilator --lint-only --timing -sv \
+  -Ivivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/tick_gen.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/hp_led_pwm.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/key_debounce.sv \
@@ -189,7 +194,9 @@ verilator --lint-only --timing -sv \
 ```
 
 ```bash
-verilator --binary --timing -sv --Mdir /private/tmp/obstacle_car_vlt \
+verilator --binary --timing -sv \
+  -Ivivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new \
+  --Mdir /private/tmp/obstacle_car_vlt \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/tick_gen.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/hp_led_pwm.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/key_debounce.sv \
@@ -222,24 +229,24 @@ tb_obstacle_car: all tests passed
 
 在有 Vivado 的环境中，建议按以下顺序检查：
 
-1. 打开 `.xpr`，确认 Sources 中能看到 7 个 RTL 文件。
+1. 打开 `.xpr`，确认 Sources 中能看到 7 个 RTL 文件、`buzzer_pcm_rom.svh` 和 `buzzer_pcm_rom.mem`。
 2. 确认 Constraints 中启用了 `obstacle_car.xdc`。
 3. 运行 Behavioral Simulation，观察 testbench 是否通过。
 4. 运行 Synthesis，确认无 latch、无多驱动、无未约束顶层端口。
 5. 运行 Implementation 和 Generate Bitstream。
 6. 下载到开发板后检查：
-   - 初始状态 4 个 LED 同步呼吸、数码管全灭。
+   - 初始状态 4 个 LED 同步呼吸、数码管中间车位闪烁。
    - 任意 KEY 开始游戏。
    - `KEY2` 左移、`KEY1` 右移，按键为低有效。
    - 障碍常亮下落，车子底层闪烁。
-   - 普通碰撞时蜂鸣器发出短促提示音，被扣除的 LED 爆闪后熄灭，其余剩余机会 LED 继续呼吸。
+   - 游戏进行中循环播放背景音乐；普通碰撞时蜂鸣器发出短促提示音，随后背景音乐从原进度继续，被扣除的 LED 爆闪后熄灭，其余剩余机会 LED 继续呼吸。
    - 最后一次碰撞导致 HP=0 时，车辆所在数码管列快速爆闪并播放失败音乐。
-   - 胜利/失败后蜂鸣器播放不同音效，并自动返回初始状态。
+   - 胜利/失败后蜂鸣器播放不同音乐，按任意键返回初始状态。
 
 ## 9. 可扩展方向
 
-当前版本完成基础功能、胜败音乐和 PWM 呼吸灯扣血动画。后续若需要继续加分，可以在现有架构上扩展：
+当前版本完成基础功能、背景/胜败音乐和 PWM 呼吸灯扣血动画。后续若需要继续加分，可以在现有架构上扩展：
 
 - 动态难度：根据 `spawn_count` 调整 `step_tick` 频率或步进间隔。
-- 更复杂音乐：扩展 `buzzer_player` 的音符表和节奏表。
+- 更高音质音乐：把 PCM 采样率/位深提高，或改用 SPI Flash / SD 卡流式读取音频数据。
 - 障碍参数化：把 LFSR 种子、最低障碍数和安全通道移动策略做成可配置参数，便于调节关卡风格。

@@ -38,6 +38,21 @@ sim_1/
 waveform/
 waveform.db/
 
+# Verilator 仿真编译产物
+obj_dir/
+*.d
+*.o
+*.a
+
+# Xilinx/Vivado 本地运行缓存
+.Xil/
+*.Xil/
+*.os/
+*.debug/
+*.gen/
+*.swp
+*.lpr
+
 # 报告文件
 *.rpt
 *.html
@@ -64,3 +79,6 @@ ip_inst/
 # 工程备份
 *.backup/
 *.backup.*
+
+# 离线试听/转换预览，可由 tools/generate_buzzer_pcm.py 重新生成
+music/buzzer_generated/

@@ -11,7 +11,8 @@
 // - car_col_o      ：车子当前所在列。
 // - hp_count_o     ：剩余生命值。
 // - collision_start_o：普通碰撞时通知蜂鸣器播放短促提示音。
-// - music_start_o/music_win_o：结束时通知蜂鸣器播放胜利或失败旋律。
+// - music_start_o/music_song_o/music_loop_o：通知蜂鸣器播放背景/胜利/失败音乐。
+// - music_stop_o：结算态按键返回 IDLE 时停止当前音乐。
 // - crash_effect_o：失败态期间通知显示模块播放最终撞车爆闪。
 //
 // 这样做的好处是：游戏规则和硬件显示细节解耦。阅读时先理解本模块的
@@ -32,7 +33,7 @@ module obstacle_game_core #(
     // key_pressed_i[0] = KEY1 右移，key_pressed_i[1] = KEY2 左移。
     // key_pressed_i[2]/[3] 在 IDLE 状态下也可用于开始游戏。
     input  logic [3:0]  key_pressed_i,
-    // 蜂鸣器播完整首音乐后拉高一拍，核心据此回到 IDLE。
+    // 蜂鸣器播完整首非循环音乐后拉高一拍；结算态仍等待按键返回 IDLE。
     input  logic        melody_done_i,
     // 18 位障碍矩阵，按 col*3 + layer 打包：
     // layer 0=上层 A 段，layer 1=中层 G 段，layer 2=下层 D 段。
@@ -43,10 +44,14 @@ module obstacle_game_core #(
     output logic [2:0]  hp_count_o,
     // 普通碰撞刚发生时拉高一拍，最终扣到 0 的碰撞不触发该短音。
     output logic        collision_start_o,
-    // 胜利或失败刚发生时拉高一拍，启动 buzzer_player。
+    // 背景/胜利/失败音乐启动时拉高一拍，启动 buzzer_player。
     output logic        music_start_o,
-    // 1 表示播放胜利音乐，0 表示播放失败音乐。
-    output logic        music_win_o,
+    // 0=背景音乐，1=胜利音乐，2=失败音乐。
+    output logic [1:0]  music_song_o,
+    // 1=循环播放，0=播放一次。
+    output logic        music_loop_o,
+    // 停止当前音乐事件脉冲。
+    output logic        music_stop_o,
     // 最终碰撞导致失败后保持为 1，用于显示车辆撞毁爆闪。
     output logic        crash_effect_o,
     // 当前状态编码，供顶层控制车子是否显示，也便于仿真观察。
@@ -55,17 +60,25 @@ module obstacle_game_core #(
     output logic [4:0]  spawn_count_o
 );
     // 四态 FSM：
-    // IDLE 等待开始；RUN 正常游戏；WIN/LOSE 等待音乐播放完成后回到 IDLE。
+    // IDLE 等待开始；RUN 正常游戏；WIN/LOSE 等待任意按键回到 IDLE。
     localparam logic [1:0] ST_IDLE = 2'd0;
     localparam logic [1:0] ST_RUN  = 2'd1;
     localparam logic [1:0] ST_WIN  = 2'd2;
     localparam logic [1:0] ST_LOSE = 2'd3;
+
+    localparam logic [1:0] SONG_BACKGROUND = 2'd0;
+    localparam logic [1:0] SONG_WIN        = 2'd1;
+    localparam logic [1:0] SONG_FAIL       = 2'd2;
 
     // 将参数常量截成 5 位，便于和 spawn_count_o 比较。
     // 本项目默认 20，小于 32；若未来要超过 31，需要同步放宽 spawn_count_o 位宽。
     localparam logic [4:0] OBSTACLE_COUNT_VALUE = 5'(OBSTACLE_COUNT);
 
     logic [1:0] state;
+    logic       music_start_pending;
+    logic [1:0] music_song_pending;
+    logic       music_loop_pending;
+    logic       music_stop_pending;
 
     // 游戏画面内部用三行 6 位表示，比直接操作 18 位矩阵更直观：
     // row_top[col]    -> 顶层障碍，对应数码管 A 段。
@@ -182,14 +195,26 @@ module obstacle_game_core #(
             collision_start_o <= 1'b0;
             spawn_count_o <= '0;
             music_start_o <= 1'b0;
-            music_win_o   <= 1'b0;
+            music_song_o  <= SONG_BACKGROUND;
+            music_loop_o  <= 1'b0;
+            music_stop_o  <= 1'b0;
+            music_start_pending <= 1'b0;
+            music_song_pending  <= SONG_BACKGROUND;
+            music_loop_pending  <= 1'b0;
+            music_stop_pending  <= 1'b0;
             lfsr_state    <= (LFSR_SEED == 16'h0000) ? 16'hACE1 : LFSR_SEED;
             safe_col      <= 3'd3;
         end else begin
-            // collision_start_o / music_start_o 都是事件脉冲，默认每拍清零；
-            // 只有对应事件发生的那一拍置 1。
+            // collision_start_o 是同拍事件脉冲。音乐 start/stop 由 pending 寄存器
+            // 统一延迟一拍输出，避免状态切换中多处写同一输出造成歧义。
             collision_start_o <= 1'b0;
-            music_start_o     <= 1'b0;
+            music_start_o     <= music_start_pending;
+            music_song_o      <= music_song_pending;
+            music_loop_o      <= music_loop_pending;
+            music_stop_o      <= music_stop_pending;
+            music_start_pending <= 1'b0;
+            music_loop_pending  <= 1'b0;
+            music_stop_pending  <= 1'b0;
 
             case (state)
                 ST_IDLE: begin
@@ -202,7 +227,6 @@ module obstacle_game_core #(
                     hp_count_o    <= 3'd4;
                     collision_start_o <= 1'b0;
                     spawn_count_o <= '0;
-                    music_win_o   <= 1'b0;
                     safe_col      <= 3'd3;
                     lfsr_state    <= lfsr_step(lfsr_state);
 
@@ -210,6 +234,9 @@ module obstacle_game_core #(
                     // 所以这里不会因为机械抖动重复触发。
                     if (|key_pressed_i) begin
                         state <= ST_RUN;
+                        music_start_pending <= 1'b1;
+                        music_song_pending  <= SONG_BACKGROUND;
+                        music_loop_pending  <= 1'b1;
                     end
                 end
 
@@ -295,38 +322,48 @@ module obstacle_game_core #(
                     safe_col      <= next_safe_col_value;
 
                     // 失败优先级高于胜利：如果最后一撞刚好扣到 0，进入 LOSE。
-                    // 进入结束态时启动蜂鸣器，并用 music_win_o 选择曲目。
+                    // 进入结束态时启动蜂鸣器，并用 music_song_o 选择曲目。
                     if (hit && (next_hp_count == 3'd0)) begin
                         state       <= ST_LOSE;
-                        music_start_o <= 1'b1;
-                        music_win_o   <= 1'b0;
+                        music_start_pending <= 1'b1;
+                        music_song_pending  <= SONG_FAIL;
+                        music_loop_pending  <= 1'b0;
                     end else if (finished) begin
                         state       <= ST_WIN;
-                        music_start_o <= 1'b1;
-                        music_win_o   <= 1'b1;
+                        music_start_pending <= 1'b1;
+                        music_song_pending  <= SONG_WIN;
+                        music_loop_pending  <= 1'b0;
                     end else if (hit) begin
                         collision_start_o <= 1'b1;
                     end
                 end
 
                 ST_WIN: begin
-                    // 胜利态保持画面清空，等待胜利音乐播放完成。
+                    // 胜利态保持画面清空。音乐可自行播完，但必须按任意键回到 IDLE。
                     row_top    <= '0;
                     row_mid    <= '0;
                     row_bottom <= '0;
                     if (melody_done_i) begin
+                        // 保持胜利界面，等待玩家确认。
+                    end
+                    if (|key_pressed_i) begin
                         state <= ST_IDLE;
+                        music_stop_pending <= 1'b1;
                     end
                 end
 
                 ST_LOSE: begin
-                    // 失败态保持画面清空和生命值为 0，等待失败音乐播放完成。
+                    // 失败态保持画面清空和生命值为 0。音乐可自行播完，但必须按任意键回到 IDLE。
                     row_top    <= '0;
                     row_mid    <= '0;
                     row_bottom <= '0;
                     hp_count_o   <= 3'd0;
                     if (melody_done_i) begin
+                        // 保持失败界面，等待玩家确认。
+                    end
+                    if (|key_pressed_i) begin
                         state <= ST_IDLE;
+                        music_stop_pending <= 1'b1;
                     end
                 end
 

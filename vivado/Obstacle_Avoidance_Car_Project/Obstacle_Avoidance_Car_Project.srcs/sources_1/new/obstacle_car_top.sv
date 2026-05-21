@@ -27,7 +27,7 @@ module obstacle_car_top #(
     parameter int SCAN_TICK_HZ  = 6_000,
     // 按键防抖时间。机械按键按下/释放时会抖动，这里等待稳定 20ms。
     parameter int DEBOUNCE_MS   = 20,
-    // 蜂鸣器换音符的节拍。8Hz 表示每个音符持续约 125ms。
+    // 旧版音符播放器保留的兼容参数；当前 PCM 播放器内部使用 4kHz 采样节拍。
     parameter int MUSIC_TICK_HZ = 8
 ) (
     // 50MHz 系统时钟输入。
@@ -42,7 +42,7 @@ module obstacle_car_top #(
     output logic [5:0] dig_o,
     // 8 路数码管段选，低电平有效，顺序为 {DP,G,F,E,D,C,B,A}。
     output logic [7:0] seg_o,
-    // 无源蜂鸣器 PWM 方波输出。
+    // 无源蜂鸣器 1bit Sigma-Delta/PWM 类音频输出。
     output logic       beep_o
 );
     // reset_pipe 将异步输入 reset_n_i 同步到 fpga_clk_i 域。
@@ -71,11 +71,13 @@ module obstacle_car_top #(
     logic [2:0]  car_col;
     logic [2:0]  hp_count;
 
-    // 游戏结束时，核心用 music_start 拉高一拍启动蜂鸣器；
-    // music_win 选择胜利旋律或失败旋律。
+    // 游戏核心用 music_start 拉高一拍启动背景/胜利/失败音乐；
+    // music_stop 用于结算态按键返回 IDLE 时立即停止蜂鸣器。
     logic        collision_start;
     logic        music_start;
-    logic        music_win;
+    logic [1:0]  music_song;
+    logic        music_loop;
+    logic        music_stop;
     logic        crash_effect;
     logic        melody_done;
     logic        melody_busy;
@@ -157,38 +159,42 @@ module obstacle_car_top #(
         .hp_count_o(hp_count),
         .collision_start_o(collision_start),
         .music_start_o(music_start),
-        .music_win_o(music_win),
+        .music_song_o(music_song),
+        .music_loop_o(music_loop),
+        .music_stop_o(music_stop),
         .crash_effect_o(crash_effect),
         .state_code_o(state_code),
         .spawn_count_o(spawn_count)
     );
 
     // 显示输出：把抽象的 6x3 游戏画面映射到 6 位数码管的 A/G/D 段。
-    // 普通情况下只有 RUN 状态显示车子；最终 HP=0 后显示撞车列爆闪。
+    // IDLE 显示中间车位闪烁作为“可开始”提示；RUN 显示玩家车子。
+    // 最终 HP=0 后显示撞车列爆闪。
     sevenseg_scan u_sevenseg_scan (
         .clk_i(fpga_clk_i),
         .rst_i(rst),
         .scan_tick_i(scan_tick),
         .obstacle_grid_i(obstacle_grid),
         .car_col_i(car_col),
-        .car_visible_i((state_code == 2'd1) && blink_phase),
+        .car_visible_i(((state_code == 2'd0) || (state_code == 2'd1)) && blink_phase),
         .crash_effect_i(crash_effect),
         .crash_visible_i(crash_effect && blink_phase),
         .dig_o(dig_o),
         .seg_o(seg_o)
     );
 
-    // 声音输出：普通碰撞触发短音；游戏结束触发胜/负旋律。
-    // 具体频率、节拍计数和 beep_o 方波都封装在 buzzer_player 内。
+    // 声音输出：背景/胜利/失败音乐来自压缩 PCM ROM；普通碰撞触发短音。
+    // 采样播放、数字音量和 beep_o 的 1bit 调制都封装在 buzzer_player 内。
     buzzer_player #(
-        .CLK_HZ(CLK_HZ),
-        .NOTE_TICK_HZ(MUSIC_TICK_HZ)
+        .CLK_HZ(CLK_HZ)
     ) u_buzzer_player (
         .clk_i(fpga_clk_i),
         .rst_i(rst),
+        .stop_i(music_stop),
         .collision_start_i(collision_start),
         .play_start_i(music_start),
-        .play_win_i(music_win),
+        .play_song_i(music_song),
+        .play_loop_i(music_loop),
         .busy_o(melody_busy),
         .done_o(melody_done),
         .beep_o(beep_o)
@@ -207,5 +213,5 @@ module obstacle_car_top #(
     // 保留调试信号的连接，避免综合工具报告未使用信号警告；
     // 该归约异或结果没有外接端口，不影响设计功能。
     logic unused_status;
-    assign unused_status = ^{key_held, melody_busy, spawn_count};
+    assign unused_status = ^{key_held, melody_busy, spawn_count, MUSIC_TICK_HZ};
 endmodule
