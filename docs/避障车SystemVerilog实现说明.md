@@ -10,24 +10,24 @@
 
 顶层模块为 `obstacle_car_top`，接口如下：
 
-| 顶层端口 | 方向 | 位宽 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `fpga_clk_i` | input | 1 | 50MHz 系统时钟 |
-| `reset_n_i` | input | 1 | 系统复位按键，低电平有效 |
-| `key_n_i` | input | 4 | `KEY1` ~ `KEY4`，低电平有效 |
-| `led_o` | output | 4 | 剩余机会 LED，高电平点亮 |
-| `dig_o` | output | 6 | 数码管位选，低电平有效 |
-| `seg_o` | output | 8 | 数码管段选，低电平有效，顺序为 `{DP,G,F,E,D,C,B,A}` |
-| `beep_o` | output | 1 | 无源蜂鸣器 PWM 输出 |
+| 顶层端口         | 方向     | 位宽  | 说明                                   |
+|:------------ |:------ |:--- |:------------------------------------ |
+| `fpga_clk_i` | input  | 1   | 50MHz 系统时钟                           |
+| `reset_n_i`  | input  | 1   | 系统复位按键，低电平有效                         |
+| `key_n_i`    | input  | 4   | `KEY1` ~ `KEY4`，低电平有效                |
+| `led_o`      | output | 4   | 剩余机会 LED，高电平点亮                       |
+| `dig_o`      | output | 6   | 数码管位选，低电平有效                          |
+| `seg_o`      | output | 8   | 数码管段选，低电平有效，顺序为 `{DP,G,F,E,D,C,B,A}` |
+| `beep_o`     | output | 1   | 无源蜂鸣器 PWM 输出                         |
 
 按键映射：
 
-| 按键 | 顶层位 | 游戏功能 |
-| :--- | :--- | :--- |
+| 按键     | 顶层位          | 游戏功能          |
+|:------ |:------------ |:------------- |
 | `KEY1` | `key_n_i[0]` | 运行状态下车子右移 1 格 |
 | `KEY2` | `key_n_i[1]` | 运行状态下车子左移 1 格 |
-| `KEY3` | `key_n_i[2]` | 初始状态下可开始游戏 |
-| `KEY4` | `key_n_i[3]` | 初始状态下可开始游戏 |
+| `KEY3` | `key_n_i[2]` | 初始状态下可开始游戏    |
+| `KEY4` | `key_n_i[3]` | 初始状态下可开始游戏    |
 
 约束文件为 `vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/constrs_1/new/obstacle_car.xdc`，已按题目中的引脚表绑定时钟、复位、按键、LED、数码管和蜂鸣器。
 
@@ -37,24 +37,24 @@
 
 `vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/`
 
-| 模块 | 文件 | 职责 |
-| :--- | :--- | :--- |
-| `obstacle_car_top` | `obstacle_car_top.sv` | 顶层集成，连接按键、游戏核心、数码管和蜂鸣器 |
-| `key_debounce` | `key_debounce.sv` | 低有效按键同步、防抖，并生成高有效单周期按下脉冲 |
-| `tick_gen` | `tick_gen.sv` | 根据 50MHz 时钟产生低速 tick enable |
-| `hp_led_pwm` | `hp_led_pwm.sv` | 剩余机会 LED PWM 呼吸显示，以及扣血爆闪后熄灭动画 |
-| `obstacle_game_core` | `obstacle_game_core.sv` | 游戏 FSM、障碍更新、车辆移动、碰撞检测、生命值和胜败判定 |
-| `sevenseg_scan` | `sevenseg_scan.sv` | 6 位共阳极数码管动态扫描，输出低有效位选和段选 |
-| `buzzer_player` | `buzzer_player.sv` | 普通碰撞短音，以及背景/胜利/失败蜂鸣器音乐播放 |
-| `buzzer_pcm_rom` | `buzzer_pcm_rom.svh` / `buzzer_pcm_rom.mem` | 由 `music/` 下 MP3 离线转换出的整首 4kHz/4bit PCM ROM |
+| 模块                   | 文件                                          | 职责                                          |
+|:-------------------- |:------------------------------------------- |:------------------------------------------- |
+| `obstacle_car_top`   | `obstacle_car_top.sv`                       | 顶层集成，连接按键、游戏核心、数码管和蜂鸣器                      |
+| `key_debounce`       | `key_debounce.sv`                           | 低有效按键同步、防抖，并生成高有效单周期按下脉冲                    |
+| `tick_gen`           | `tick_gen.sv`                               | 根据 50MHz 时钟产生低速 tick enable                 |
+| `hp_led_pwm`         | `hp_led_pwm.sv`                             | 剩余机会 LED PWM 呼吸显示，以及扣血爆闪后熄灭动画               |
+| `obstacle_game_core` | `obstacle_game_core.sv`                     | 游戏 FSM、障碍更新、车辆移动、碰撞检测、生命值和胜败判定              |
+| `sevenseg_scan`      | `sevenseg_scan.sv`                          | 6 位共阳极数码管动态扫描，输出低有效位选和段选                    |
+| `buzzer_player`      | `buzzer_player.sv`                          | 普通碰撞短音，以及背景/胜利/失败蜂鸣器音乐播放                    |
+| `buzzer_pcm_rom`     | `buzzer_pcm_rom.svh` / `buzzer_pcm_rom.mem` | 由 `music/` 下 MP3 离线转换出的整首 4kHz/4bit PCM ROM |
 
 顶层中使用三个主要 tick，LED 特效模块内部还复用 `tick_gen` 产生呼吸和爆闪 tick：
 
-| tick | 默认频率 | 用途 |
-| :--- | :--- | :--- |
-| `step_tick` | 2Hz | 障碍每 0.5s 下落一层 |
-| `blink_tick` | 8Hz | 控制车子闪烁显示 |
-| `scan_tick` | 6000Hz | 数码管动态扫描 |
+| tick         | 默认频率   | 用途            |
+|:------------ |:------ |:------------- |
+| `step_tick`  | 2Hz    | 障碍每 0.5s 下落一层 |
+| `blink_tick` | 8Hz    | 控制车子闪烁显示      |
+| `scan_tick`  | 6000Hz | 数码管动态扫描       |
 
 ## 4. 游戏显示模型
 
@@ -65,11 +65,11 @@
 
 每一位数码管只使用 `A/G/D` 三个横向段来表示障碍下落位置：
 
-| 游戏层 | 数码管段 | 含义 |
-| :--- | :--- | :--- |
-| 上层 | `A` | 新障碍出现位置 |
-| 中层 | `G` | 障碍下落中间位置 |
-| 下层 | `D` | 碰撞检测位置，同时也是车子所在层 |
+| 游戏层 | 数码管段 | 含义               |
+|:--- |:---- |:---------------- |
+| 上层  | `A`  | 新障碍出现位置          |
+| 中层  | `G`  | 障碍下落中间位置         |
+| 下层  | `D`  | 碰撞检测位置，同时也是车子所在层 |
 
 障碍使用常亮段码显示，车子使用 `D` 段闪烁显示。由于开发板数码管只有单色显示，实际硬件上无法显示题目图中的红色和黄色，因此用“常亮”和“闪烁”区分障碍与车子。`IDLE` 状态下中间车位会闪烁，提示当前可按任意键开始。最后一次碰撞导致 HP=0 后，车辆所在列会在失败音乐期间多段爆闪，表示车辆已撞毁。
 
@@ -85,12 +85,12 @@ obstacle_grid[col * 3 + 2] -> 下层 D 段
 
 `obstacle_game_core` 包含 4 个状态：
 
-| 状态 | 编码 | 说明 |
-| :--- | :--- | :--- |
+| 状态        | 编码     | 说明                                      |
+|:--------- |:------ |:--------------------------------------- |
 | `ST_IDLE` | `2'd0` | 初始状态，4 个剩余机会 LED 同步呼吸，中间车位闪烁提示，等待任意按键开始 |
-| `ST_RUN` | `2'd1` | 运行状态，处理车辆移动、障碍下落、碰撞和胜败判定 |
-| `ST_WIN` | `2'd2` | 胜利状态，播放胜利音乐，等待任意按键回到初始状态 |
-| `ST_LOSE` | `2'd3` | 失败状态，播放失败音乐，等待任意按键回到初始状态 |
+| `ST_RUN`  | `2'd1` | 运行状态，处理车辆移动、障碍下落、碰撞和胜败判定                |
+| `ST_WIN`  | `2'd2` | 胜利状态，播放胜利音乐，等待任意按键回到初始状态                |
+| `ST_LOSE` | `2'd3` | 失败状态，播放失败音乐，等待任意按键回到初始状态                |
 
 状态转换关系：
 
@@ -120,13 +120,13 @@ stateDiagram-v2
 
 生命值由 `hp_count` 表示，初始值为 4。LED 为高电平点亮，并由 `hp_led_pwm` 做 PWM 特效：
 
-| `hp_count` | 剩余机会掩码 |
-| :--- | :--- |
-| 4 | `4'b1111` |
-| 3 | `4'b0111` |
-| 2 | `4'b0011` |
-| 1 | `4'b0001` |
-| 0 | `4'b0000` |
+| `hp_count` | 剩余机会掩码    |
+|:---------- |:--------- |
+| 4          | `4'b1111` |
+| 3          | `4'b0111` |
+| 2          | `4'b0011` |
+| 1          | `4'b0001` |
+| 0          | `4'b0000` |
 
 掩码内的 LED 同步呼吸，最低亮度不降到 0，避免剩余机会在呼吸低谷完全不可见。当 `hp_count` 减小时，`hp_led_pwm` 通过寄存后的 `hp_count_d` 检测减少事件，被扣除的 LED 快速爆闪约 0.5s 后熄灭，其他剩余 LED 继续呼吸。该模块只使用 `posedge clk_i` 和 tick enable，不使用下降沿或派生时钟。
 
