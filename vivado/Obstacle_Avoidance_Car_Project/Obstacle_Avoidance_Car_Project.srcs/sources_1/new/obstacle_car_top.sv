@@ -19,8 +19,11 @@
 module obstacle_car_top #(
     // 开发板系统时钟频率。默认 50MHz，所有分频参数都以它为基准。
     parameter int CLK_HZ        = 50_000_000,
-    // 障碍下落频率：2Hz 表示每 0.5s 下落一层。
-    parameter int STEP_TICK_HZ  = 2,
+    // 障碍下落动态速度：2Hz 起步，每 15s 加快，最高 4Hz。
+    parameter int STEP_START_HZ       = 2,
+    parameter int STEP_MID_HZ         = 3,
+    parameter int STEP_MAX_HZ         = 4,
+    parameter int STEP_ACCEL_SECONDS  = 15,
     // 车子闪烁频率：用于让底层 D 段闪烁，和障碍常亮区分开。
     parameter int BLINK_TICK_HZ = 8,
     // 数码管扫描频率：6 位轮询，默认 6000Hz，总刷新足够高，不易闪烁。
@@ -84,7 +87,8 @@ module obstacle_car_top #(
 
     // state_code / spawn_count 主要用于显示控制和调试观测。
     logic [1:0]  state_code;
-    logic [4:0]  spawn_count;
+    logic [5:0]  spawn_count;
+    logic [1:0]  step_speed_level;
 
     always_ff @(posedge fpga_clk_i) begin
         reset_pipe <= {reset_pipe[0], ~reset_n_i};
@@ -106,14 +110,19 @@ module obstacle_car_top #(
         .key_held_o(key_held)
     );
 
-    // 时基 1：控制障碍下落速度。
-    tick_gen #(
+    // 时基 1：控制障碍下落速度。只在 RUN 状态产生 tick，且随时间递增。
+    dynamic_step_tick #(
         .CLK_HZ(CLK_HZ),
-        .TICK_HZ(STEP_TICK_HZ)
-    ) u_step_tick (
+        .START_HZ(STEP_START_HZ),
+        .MID_HZ(STEP_MID_HZ),
+        .MAX_HZ(STEP_MAX_HZ),
+        .ACCEL_SECONDS(STEP_ACCEL_SECONDS)
+    ) u_dynamic_step_tick (
         .clk_i(fpga_clk_i),
         .rst_i(rst),
-        .tick_o(step_tick)
+        .run_i(state_code == 2'd1),
+        .tick_o(step_tick),
+        .speed_level_o(step_speed_level)
     );
 
     // 时基 2：控制车子显示闪烁。
@@ -213,5 +222,5 @@ module obstacle_car_top #(
     // 保留调试信号的连接，避免综合工具报告未使用信号警告；
     // 该归约异或结果没有外接端口，不影响设计功能。
     logic unused_status;
-    assign unused_status = ^{key_held, melody_busy, spawn_count, MUSIC_TICK_HZ};
+    assign unused_status = ^{key_held, melody_busy, spawn_count, step_speed_level, MUSIC_TICK_HZ};
 endmodule

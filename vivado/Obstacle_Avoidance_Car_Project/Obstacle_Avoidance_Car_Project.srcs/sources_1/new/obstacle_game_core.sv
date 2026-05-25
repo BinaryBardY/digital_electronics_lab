@@ -19,7 +19,7 @@
 // 状态机，再看 sevenseg_scan 如何把 obstacle_grid_o 映射成 A/G/D 段。
 // -----------------------------------------------------------------------------
 module obstacle_game_core #(
-    // 关卡一共生成多少批障碍。默认 20 批，生成完并全部离开画面后胜利。
+    // 默认关卡障碍数。实际本局障碍数会在 IDLE 按 KEY1~KEY4 时选择。
     parameter int OBSTACLE_COUNT = 20,
     // LFSR 初始种子必须非 0；空闲态持续滚动，开局时机不同会得到不同障碍序列。
     parameter logic [15:0] LFSR_SEED = 16'hACE1
@@ -57,7 +57,7 @@ module obstacle_game_core #(
     // 当前状态编码，供顶层控制车子是否显示，也便于仿真观察。
     output logic [1:0]  state_code_o,
     // 已经生成过的障碍批次数，供调试和胜利判定使用。
-    output logic [4:0]  spawn_count_o
+    output logic [5:0]  spawn_count_o
 );
     // 四态 FSM：
     // IDLE 等待开始；RUN 正常游戏；WIN/LOSE 等待任意按键回到 IDLE。
@@ -70,11 +70,14 @@ module obstacle_game_core #(
     localparam logic [1:0] SONG_WIN        = 2'd1;
     localparam logic [1:0] SONG_FAIL       = 2'd2;
 
-    // 将参数常量截成 5 位，便于和 spawn_count_o 比较。
-    // 本项目默认 20，小于 32；若未来要超过 31，需要同步放宽 spawn_count_o 位宽。
-    localparam logic [4:0] OBSTACLE_COUNT_VALUE = 5'(OBSTACLE_COUNT);
+    localparam logic [5:0] DEFAULT_OBSTACLE_COUNT = 6'(OBSTACLE_COUNT);
+    localparam logic [5:0] OBSTACLE_COUNT_KEY1    = 6'd20;
+    localparam logic [5:0] OBSTACLE_COUNT_KEY2    = 6'd30;
+    localparam logic [5:0] OBSTACLE_COUNT_KEY3    = 6'd40;
+    localparam logic [5:0] OBSTACLE_COUNT_KEY4    = 6'd50;
 
     logic [1:0] state;
+    logic [5:0] target_obstacle_count;
     logic       music_start_pending;
     logic [1:0] music_song_pending;
     logic       music_loop_pending;
@@ -129,7 +132,7 @@ module obstacle_game_core #(
 
     function automatic logic [5:0] make_obstacle_row(
         input logic [15:0] random_value,
-        input logic [4:0]  row_index,
+        input logic [5:0]  row_index,
         input logic [2:0]  open_col
     );
         logic [5:0] row_value;
@@ -138,7 +141,7 @@ module obstacle_game_core #(
         begin
             row_value = random_value[5:0]
                       ^ random_value[11:6]
-                      ^ {1'b0, row_index};
+                      ^ row_index;
             row_value[open_col] = 1'b0;
 
             obstacle_count = 0;
@@ -202,6 +205,7 @@ module obstacle_game_core #(
             music_song_pending  <= SONG_BACKGROUND;
             music_loop_pending  <= 1'b0;
             music_stop_pending  <= 1'b0;
+            target_obstacle_count <= DEFAULT_OBSTACLE_COUNT;
             lfsr_state    <= (LFSR_SEED == 16'h0000) ? 16'hACE1 : LFSR_SEED;
             safe_col      <= 3'd3;
         end else begin
@@ -231,9 +235,19 @@ module obstacle_game_core #(
                     lfsr_state    <= lfsr_step(lfsr_state);
 
                     // 任意按键都可以开始游戏。key_pressed_i 已经过防抖，
-                    // 所以这里不会因为机械抖动重复触发。
+                    // 所以这里不会因为机械抖动重复触发。KEY1~KEY4 同时
+                    // 触发时按 KEY1 优先，分别选择 20/30/40/50 个障碍。
                     if (|key_pressed_i) begin
                         state <= ST_RUN;
+                        if (key_pressed_i[0]) begin
+                            target_obstacle_count <= OBSTACLE_COUNT_KEY1;
+                        end else if (key_pressed_i[1]) begin
+                            target_obstacle_count <= OBSTACLE_COUNT_KEY2;
+                        end else if (key_pressed_i[2]) begin
+                            target_obstacle_count <= OBSTACLE_COUNT_KEY3;
+                        end else begin
+                            target_obstacle_count <= OBSTACLE_COUNT_KEY4;
+                        end
                         music_start_pending <= 1'b1;
                         music_song_pending  <= SONG_BACKGROUND;
                         music_loop_pending  <= 1'b1;
@@ -246,7 +260,7 @@ module obstacle_game_core #(
                     // 最后再统一写回寄存器，避免同一 always_ff 中读写顺序混乱。
                     logic [2:0] next_car_col;
                     logic [2:0] next_hp_count;
-                    logic [4:0] next_spawn_count;
+                    logic [5:0] next_spawn_count;
                     logic [5:0] next_top;
                     logic [5:0] next_mid;
                     logic [5:0] next_bottom;
@@ -280,7 +294,7 @@ module obstacle_game_core #(
                     if (step_tick_i) begin
                         next_bottom = row_mid;
                         next_mid    = row_top;
-                        if (spawn_count_o < OBSTACLE_COUNT_VALUE) begin
+                        if (spawn_count_o < target_obstacle_count) begin
                             next_safe_col_value = next_safe_col(safe_col, lfsr_state[1:0]);
                             next_top = make_obstacle_row(lfsr_state, spawn_count_o, next_safe_col_value);
                             next_spawn_count = spawn_count_o + 1'b1;
@@ -303,10 +317,10 @@ module obstacle_game_core #(
                     end
 
                     // 胜利条件：
-                    // 1. 预设的 OBSTACLE_COUNT 批障碍已经全部生成；
+                    // 1. 本局选择的 target_obstacle_count 批障碍已经全部生成；
                     // 2. top/mid/bottom 三层都为空，说明最后一批也离开了画面；
                     // 3. 且前面的失败条件没有先发生。
-                    finished = (next_spawn_count >= OBSTACLE_COUNT_VALUE)
+                    finished = (next_spawn_count >= target_obstacle_count)
                             && (next_top == 6'b0)
                             && (next_mid == 6'b0)
                             && (next_bottom == 6'b0);
