@@ -45,8 +45,7 @@
 | `hp_led_pwm`         | `hp_led_pwm.sv`                             | 剩余机会 LED PWM 呼吸显示，以及扣血爆闪后熄灭动画               |
 | `obstacle_game_core` | `obstacle_game_core.sv`                     | 游戏 FSM、障碍更新、车辆移动、碰撞检测、生命值和胜败判定              |
 | `sevenseg_scan`      | `sevenseg_scan.sv`                          | 6 位共阳极数码管动态扫描，输出低有效位选和段选                    |
-| `buzzer_player`      | `buzzer_player.sv`                          | 普通碰撞短音，以及背景/胜利/失败蜂鸣器音乐播放                    |
-| `buzzer_pcm_rom`     | `buzzer_pcm_rom.svh` / `buzzer_pcm_rom.mem` | 由 `music/` 下 MP3 离线转换出的整首 4kHz/4bit PCM ROM |
+| `buzzer_note_player` | `buzzer_note_player.sv`                     | 普通碰撞短音，以及背景/胜利/失败蜂鸣器旋律播放                    |
 
 顶层中使用三个主要 tick，LED 特效模块内部还复用 `tick_gen` 产生呼吸和爆闪 tick：
 
@@ -130,15 +129,15 @@ stateDiagram-v2
 
 掩码内的 LED 同步呼吸，最低亮度不降到 0，避免剩余机会在呼吸低谷完全不可见。当 `hp_count` 减小时，`hp_led_pwm` 通过寄存后的 `hp_count_d` 检测减少事件，被扣除的 LED 快速爆闪约 0.5s 后熄灭，其他剩余 LED 继续呼吸。该模块只使用 `posedge clk_i` 和 tick enable，不使用下降沿或派生时钟。
 
-蜂鸣器模块 `buzzer_player` 支持普通碰撞短音和三类整首采样音乐：
+蜂鸣器模块 `buzzer_note_player` 使用无源蜂鸣器常见播放方式：音符表 + 节拍表 + 方波分频器。
 
-- 背景音乐：进入 `RUN` 后循环播放，由 `music/background/background_see you again 8 bit 版.mp3` 完整转换而来。
-- 胜利音乐：进入 `ST_WIN` 后播放一次，由 `music/win/win_稻香8bit版.mp3` 完整转换而来。
-- 失败音乐：进入 `ST_LOSE` 后播放一次，由 `music/fail/马里奥游戏失败音乐_9s_to_12s.mp3` 转换而来。
+- 背景音乐：进入 `RUN` 后循环播放 `See You Again` 主旋律版本。
+- 胜利音乐：进入 `ST_WIN` 后播放一次 Can-Can / Infernal Galop 胜利旋律。
+- 失败音乐：进入 `ST_LOSE` 后播放一次 Mario-style 失败短旋律。
 - 普通碰撞：播放约 150ms、约 1kHz 的短促提示音；若背景音乐正在播放，短音期间暂停背景，短音结束后从原进度继续。
 - 胜利/失败音乐可自行播完并静音，但状态机不会自动返回 `IDLE`；玩家按任意键后立即返回 `IDLE` 并停止当前音乐。
-- 音频由 `tools/generate_buzzer_pcm.py` 离线转换为 4kHz、4bit、单声道 PCM；两个采样打包为 1 byte，存入 `buzzer_pcm_rom.mem`。
-- `buzzer_player` 从 PCM ROM 按采样点读取原音频波形，再用一阶 Sigma-Delta 调制输出到单个 `beep_o` 引脚。默认 `VOLUME_SHIFT=1`，约 50% 音量，避免蜂鸣器过响刺耳。
+- 音乐数据由 `tools/generate_buzzer_note_player.py` 生成，脚本同时输出 `buzzer_note_player.sv` 和 `music/note_player_preview/` 下的 WAV 试听文件。
+- RTL 内部不保存 PCM 采样，只保存音符编号和节拍长度。每个音符通过 `CLK_HZ / (note_hz * 2)` 计算半周期计数，到点翻转 `beep_o`，从而输出适合无源蜂鸣器的方波。
 
 ## 7. 验证方法
 
@@ -146,7 +145,7 @@ stateDiagram-v2
 
 `vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sim_1/new/tb_obstacle_car.sv`
 
-当前本机没有 `vivado` 和 `iverilog` 命令，但已使用 Verilator 完成 lint 和自检仿真。
+当前已使用 Vivado 前端编译器 `xvlog` 完成 SystemVerilog 语法检查。
 
 已验证场景：
 
@@ -158,7 +157,7 @@ stateDiagram-v2
 - `hp_led_pwm` 在 hp=4 时四灯同步 PWM 呼吸，扣血时被扣 LED 爆闪后熄灭，hp=0 时全灭，hp 恢复后重新呼吸。
 - 普通碰撞只触发 `collision_start` 短音事件，不触发车辆视觉爆闪。
 - 最后一次碰撞进入失败状态时，`crash_effect` 保持有效，车辆所在数码管列快速爆闪，并启动失败音乐。
-- `buzzer_player` 的普通碰撞短音会翻转 `beep_o`，短音结束不产生 `done`；普通碰撞会暂停背景音乐并在短音结束后续播。
+- `buzzer_note_player` 的普通碰撞短音会翻转 `beep_o`，短音结束不产生 `done`；普通碰撞会暂停背景音乐并在短音结束后续播。
 - 胜利/失败音乐结束后保持结算态静音；任意按键会停止当前音乐并回到初始状态。
 - LFSR 刷新的障碍行不是固定重复图案，生成期内不会出现 6 列全堵，且始终存在下一步可达的安全空位。
 - 主动撞击可达障碍 4 次后进入失败状态，生命值变为 0，触发失败音乐，按键后返回初始状态。
@@ -167,53 +166,18 @@ stateDiagram-v2
 已执行并通过的命令：
 
 ```bash
-verilator --lint-only -sv \
-  -Ivivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new \
+xvlog -sv \
+  -i vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/tick_gen.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/hp_led_pwm.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/key_debounce.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/obstacle_game_core.sv \
   vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/sevenseg_scan.sv \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/buzzer_player.sv \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/obstacle_car_top.sv \
-  --top-module obstacle_car_top
+  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/buzzer_note_player.sv \
+  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/obstacle_car_top.sv
 ```
 
-```bash
-verilator --lint-only --timing -sv \
-  -Ivivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/tick_gen.sv \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/hp_led_pwm.sv \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/key_debounce.sv \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/obstacle_game_core.sv \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/sevenseg_scan.sv \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/buzzer_player.sv \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/obstacle_car_top.sv \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sim_1/new/tb_obstacle_car.sv \
-  --top-module tb_obstacle_car
-```
-
-```bash
-verilator --binary --timing -sv \
-  -Ivivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new \
-  --Mdir /private/tmp/obstacle_car_vlt \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/tick_gen.sv \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/hp_led_pwm.sv \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/key_debounce.sv \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/obstacle_game_core.sv \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/sevenseg_scan.sv \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/buzzer_player.sv \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sources_1/new/obstacle_car_top.sv \
-  vivado/Obstacle_Avoidance_Car_Project/Obstacle_Avoidance_Car_Project.srcs/sim_1/new/tb_obstacle_car.sv \
-  --top-module tb_obstacle_car
-/private/tmp/obstacle_car_vlt/Vtb_obstacle_car
-```
-
-最终仿真输出：
-
-```text
-tb_obstacle_car: all tests passed
-```
+检查结果：所有 RTL 文件均被 `xvlog` 正常分析，未报 SystemVerilog 语法错误。
 
 ## 8. Vivado 使用说明
 
@@ -229,7 +193,7 @@ tb_obstacle_car: all tests passed
 
 在有 Vivado 的环境中，建议按以下顺序检查：
 
-1. 打开 `.xpr`，确认 Sources 中能看到 7 个 RTL 文件、`buzzer_pcm_rom.svh` 和 `buzzer_pcm_rom.mem`。
+1. 打开 `.xpr`，确认 Sources 中能看到 7 个 RTL 文件，其中包含 `buzzer_note_player.sv`。
 2. 确认 Constraints 中启用了 `obstacle_car.xdc`。
 3. 运行 Behavioral Simulation，观察 testbench 是否通过。
 4. 运行 Synthesis，确认无 latch、无多驱动、无未约束顶层端口。
@@ -248,5 +212,5 @@ tb_obstacle_car: all tests passed
 当前版本完成基础功能、背景/胜败音乐和 PWM 呼吸灯扣血动画。后续若需要继续加分，可以在现有架构上扩展：
 
 - 动态难度：根据 `spawn_count` 调整 `step_tick` 频率或步进间隔。
-- 更高音质音乐：把 PCM 采样率/位深提高，或改用 SPI Flash / SD 卡流式读取音频数据。
+- 更复杂音乐：增加音符表的半音、八度和节拍精度，或改用 SPI Flash / SD 卡流式读取 PCM 音频。
 - 障碍参数化：把 LFSR 种子、最低障碍数和安全通道移动策略做成可配置参数，便于调节关卡风格。

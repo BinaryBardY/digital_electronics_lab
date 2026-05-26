@@ -107,15 +107,22 @@ module buzzer_player #(
         COLLISION_HALF_W'(COLLISION_HALF_CYCLES - 1);
 
     localparam int PCM_INDEX_W = (PCM_SAMPLE_COUNT <= 2) ? 1 : $clog2(PCM_SAMPLE_COUNT);
+    localparam int PCM_BYTE_ADDR_W = (PCM_BYTE_COUNT <= 2) ? 1 : $clog2(PCM_BYTE_COUNT);
 
     localparam logic [1:0] MODE_IDLE      = 2'd0;
     localparam logic [1:0] MODE_SONG      = 2'd1;
     localparam logic [1:0] MODE_COLLISION = 2'd2;
 
-    logic [7:0] pcm_rom [0:PCM_BYTE_COUNT-1];
+    (* rom_style = "block" *) logic [7:0] pcm_rom [0:PCM_BYTE_COUNT-1];
+    logic [PCM_BYTE_ADDR_W-1:0] pcm_addr;
+    logic [7:0] pcm_data;
 
     initial begin
         $readmemh(PCM_MEM_FILE, pcm_rom);
+    end
+
+    always_ff @(posedge clk_i) begin
+        pcm_data <= pcm_rom[pcm_addr];
     end
 
     function automatic logic [3:0] unpack_sample4(
@@ -161,6 +168,7 @@ module buzzer_player #(
     logic [1:0]               active_song;
     logic                     active_loop;
     logic                     resume_song_after_collision;
+    logic [1:0]               pcm_read_wait;
 
     always_ff @(posedge clk_i) begin
         if (rst_i) begin
@@ -172,6 +180,8 @@ module buzzer_player #(
             sigma_tick_cnt <= '0;
             sigma_accum <= '0;
             current_sample <= 4'd8;
+            pcm_addr <= '0;
+            pcm_read_wait <= '0;
             collision_cnt <= '0;
             collision_tone_cnt <= '0;
             play_mode    <= MODE_IDLE;
@@ -189,6 +199,8 @@ module buzzer_player #(
                 sigma_tick_cnt <= '0;
                 sigma_accum <= '0;
                 current_sample <= 4'd8;
+                pcm_addr <= '0;
+                pcm_read_wait <= '0;
                 collision_cnt <= '0;
                 collision_tone_cnt <= '0;
                 play_mode    <= MODE_IDLE;
@@ -197,10 +209,8 @@ module buzzer_player #(
                 resume_song_after_collision <= 1'b0;
             end else if (play_start_i) begin
                 int start_index;
-                logic [7:0] start_byte;
 
                 start_index = pcm_song_start(play_song_i);
-                start_byte = pcm_rom[start_index >> 1];
 
                 busy_o       <= 1'b1;
                 beep_o       <= 1'b0;
@@ -208,7 +218,9 @@ module buzzer_player #(
                 sample_tick_cnt <= '0;
                 sigma_tick_cnt <= '0;
                 sigma_accum <= '0;
-                current_sample <= scale_sample4(unpack_sample4(start_byte, (start_index % 2) != 0));
+                current_sample <= 4'd8;
+                pcm_addr <= PCM_BYTE_ADDR_W'(start_index >> 1);
+                pcm_read_wait <= 2'd2;
                 collision_cnt <= '0;
                 collision_tone_cnt <= '0;
                 play_mode    <= MODE_SONG;
@@ -223,6 +235,7 @@ module buzzer_player #(
                         sigma_tick_cnt <= '0;
                         sigma_accum <= '0;
                         current_sample <= 4'd8;
+                        pcm_read_wait <= '0;
                         resume_song_after_collision <= 1'b0;
 
                         if (collision_start_i) begin
@@ -270,7 +283,6 @@ module buzzer_player #(
                     MODE_SONG: begin
                         logic [4:0] sigma_sum;
                         int next_index;
-                        logic [7:0] next_byte;
 
                         if (collision_start_i && (active_song == SONG_BACKGROUND)) begin
                             busy_o       <= 1'b1;
@@ -281,6 +293,16 @@ module buzzer_player #(
                             sigma_accum <= '0;
                             resume_song_after_collision <= 1'b1;
                             play_mode    <= MODE_COLLISION;
+                        end else if (pcm_read_wait != 0) begin
+                            sample_tick_cnt <= '0;
+                            if (pcm_read_wait == 2'd1) begin
+                                pcm_read_wait <= '0;
+                                current_sample <= scale_sample4(
+                                    unpack_sample4(pcm_data, sample_index[0])
+                                );
+                            end else begin
+                                pcm_read_wait <= pcm_read_wait - 1'b1;
+                            end
                         end else begin
                             if (sigma_tick_cnt == SIGMA_LAST) begin
                                 sigma_tick_cnt <= '0;
@@ -297,9 +319,9 @@ module buzzer_player #(
                                 if (sample_index == PCM_INDEX_W'(pcm_song_last(active_song))) begin
                                     if (active_loop) begin
                                         next_index = pcm_song_start(active_song);
-                                        next_byte = pcm_rom[next_index >> 1];
                                         sample_index <= PCM_INDEX_W'(next_index);
-                                        current_sample <= scale_sample4(unpack_sample4(next_byte, (next_index % 2) != 0));
+                                        pcm_addr <= PCM_BYTE_ADDR_W'(next_index >> 1);
+                                        pcm_read_wait <= 2'd2;
                                     end else begin
                                         busy_o       <= 1'b0;
                                         done_o       <= 1'b1;
@@ -308,13 +330,18 @@ module buzzer_player #(
                                         sigma_tick_cnt <= '0;
                                         sigma_accum <= '0;
                                         current_sample <= 4'd8;
+                                        pcm_read_wait <= '0;
                                         play_mode    <= MODE_IDLE;
                                     end
                                 end else begin
                                     next_index = int'(sample_index) + 1;
-                                    next_byte = pcm_rom[next_index >> 1];
                                     sample_index <= PCM_INDEX_W'(next_index);
-                                    current_sample <= scale_sample4(unpack_sample4(next_byte, (next_index % 2) != 0));
+                                    if ((next_index % 2) == 0) begin
+                                        pcm_addr <= PCM_BYTE_ADDR_W'(next_index >> 1);
+                                        pcm_read_wait <= 2'd2;
+                                    end else begin
+                                        current_sample <= scale_sample4(unpack_sample4(pcm_data, 1'b1));
+                                    end
                                 end
                             end else begin
                                 sample_tick_cnt <= sample_tick_cnt + 1'b1;

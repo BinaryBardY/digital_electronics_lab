@@ -185,9 +185,9 @@ module obstacle_car_top #(
 
     // 声音输出：背景/胜利/失败音乐来自压缩 PCM ROM；普通碰撞触发短音。
     // 采样播放、数字音量和 beep_o 的 1bit 调制都封装在 buzzer_player 内。
-    buzzer_player #(
+    buzzer_note_player #(
         .CLK_HZ(CLK_HZ)
-    ) u_buzzer_player (
+    ) u_buzzer_note_player (
         .clk_i(fpga_clk_i),
         .rst_i(rst),
         .stop_i(music_stop),
