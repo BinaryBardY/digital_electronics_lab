@@ -8,7 +8,7 @@
 // 推荐阅读入口：
 // 1. 先看本文件的端口和参数，了解整机有哪些外设和全局频率。
 // 2. 再顺着实例化关系看 key_debounce / tick_gen / obstacle_game_core /
-//    sevenseg_scan / buzzer_player，各子模块只通过清晰的信号互连。
+//    sevenseg_scan / buzzer_note_player，各子模块只通过清晰的信号互连。
 //
 // 设计约定：
 // - 全系统只使用 fpga_clk_i 一个 50MHz 时钟。
@@ -27,7 +27,7 @@ module obstacle_car_top #(
     parameter int SCAN_TICK_HZ  = 6_000,
     // 按键防抖时间。机械按键按下/释放时会抖动，这里等待稳定 20ms。
     parameter int DEBOUNCE_MS   = 20,
-    // 旧版音符播放器保留的兼容参数；当前 PCM 播放器内部使用 4kHz 采样节拍。
+    // 兼容保留参数；当前音符播放器不再使用外部音乐采样 tick。
     parameter int MUSIC_TICK_HZ = 8
 ) (
     // 50MHz 系统时钟输入。
@@ -38,11 +38,11 @@ module obstacle_car_top #(
     input  logic [3:0] key_n_i,
     // 生命值 LED，高电平点亮。
     output logic [3:0] led_o,
-    // 6 位数码管位选，低电平有效。
+    // 6 位数码管位选，高电平有效。
     output logic [5:0] dig_o,
     // 8 路数码管段选，低电平有效，顺序为 {DP,G,F,E,D,C,B,A}。
     output logic [7:0] seg_o,
-    // 无源蜂鸣器 1bit Sigma-Delta/PWM 类音频输出。
+    // 无源蜂鸣器方波输出；当前开发板蜂鸣器为低电平有效。
     output logic       beep_o
 );
     // reset_pipe 将异步输入 reset_n_i 同步到 fpga_clk_i 域。
@@ -71,7 +71,7 @@ module obstacle_car_top #(
     logic [2:0]  car_col;
     logic [2:0]  hp_count;
 
-    // 游戏核心用 music_start 拉高一拍启动背景/胜利/失败音乐；
+    // 游戏核心用 music_start 拉高一拍启动胜利/失败音乐；
     // music_stop 用于结算态按键返回 IDLE 时立即停止蜂鸣器。
     logic        collision_start;
     logic        music_start;
@@ -183,10 +183,11 @@ module obstacle_car_top #(
         .seg_o(seg_o)
     );
 
-    // 声音输出：背景/胜利/失败音乐来自压缩 PCM ROM；普通碰撞触发短音。
-    // 采样播放、数字音量和 beep_o 的 1bit 调制都封装在 buzzer_player 内。
+    // 声音输出：RUN 状态循环播放背景音乐；胜利/失败旋律来自音符表，普通碰撞触发短音。
+    // 方波分频、输出极性适配都封装在 buzzer_note_player 内。
     buzzer_note_player #(
-        .CLK_HZ(CLK_HZ)
+        .CLK_HZ(CLK_HZ),
+        .BUZZER_ACTIVE_LOW(1'b1)
     ) u_buzzer_note_player (
         .clk_i(fpga_clk_i),
         .rst_i(rst),
