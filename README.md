@@ -1,6 +1,6 @@
 # 避障车 FPGA 项目
 
-基于野火升腾 Mini FPGA 开发板的数电课程项目。项目使用 SystemVerilog 实现一个 6 列、3 层显示的“避障车”小游戏，玩家通过按键控制车辆左右移动，在数码管上躲避下落障碍，并配合 LED 生命值显示与无源蜂鸣器音效完成完整游戏流程。vivado版本为2023.2。
+基于野火升腾 Mini FPGA 开发板的数电课程项目。项目使用 SystemVerilog 实现一个 6 列、3 层显示的“避障车”小游戏，玩家通过按键控制车辆左右移动，在数码管上躲避下落障碍，并配合 LED 生命值显示与无源蜂鸣器音效完成完整游戏流程。
 
 当前版本已经整合：
 
@@ -10,6 +10,12 @@
 - 数码管动态扫描显示
 - LED 呼吸与扣血爆闪效果
 - 安全路径可达的障碍生成策略
+
+## 开发环境
+
+- Vivado 版本：`2023.2`
+- 目标开发板：野火升腾 Mini FPGA
+- 主要语言：SystemVerilog
 
 ## 项目特点
 
@@ -134,6 +140,10 @@ python tools/generate_buzzer_note_player.py
 - 蜂鸣器音乐修改汇总：[docs/蜂鸣器音乐修改汇总.md](/C:/Users/32171/.codex/worktrees/d095/V1/docs/蜂鸣器音乐修改汇总.md)
 - 验收答辩参考：[docs/验收答辩常见问题与参考回答.md](/C:/Users/32171/.codex/worktrees/d095/V1/docs/验收答辩常见问题与参考回答.md)
 - 题目需求：[题目/避障车需求与设计文档.md](/C:/Users/32171/.codex/worktrees/d095/V1/题目/避障车需求与设计文档.md)
+
+## 演示资源
+
+- 项目演示视频：[obstacle_car_demo.mp4](/C:/Users/32171/.codex/worktrees/d095/V1/demo/obstacle_car_demo.mp4)
 
 ## 当前状态
 
